@@ -17,6 +17,7 @@ import os
 import sys
 import io
 import time
+import threading
 
 import yaml
 from flask import Flask, jsonify, render_template, request
@@ -63,6 +64,25 @@ SESIONES = {}
 
 # Alarmas y capacidades de enlace (monitoreo.yml junto al exe)
 mono.iniciar(_dir_datos())
+
+
+def _hilo_reconciliador():
+    """Mantiene los costos OSPF en su estado deseado aunque la interfaz esté
+    cerrada: si no hay regla vigente, devuelve a dinámico lo que el motor había
+    cambiado (evita que quede "pegado" el camino de la última regla)."""
+    while True:
+        time.sleep(3)
+        try:
+            if not SESIONES:
+                continue
+            if time.time() - mono.ultimo_poll() < 8:
+                continue
+            mono.poll(SESIONES)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+threading.Thread(target=_hilo_reconciliador, daemon=True).start()
 
 
 def _datos_request():
@@ -498,6 +518,37 @@ def api_alarmas():
         return jsonify({"ok": True})
 
     return jsonify({"ok": True, "config": mono.config()})
+
+
+@app.route("/api/direccionamiento", methods=["POST"])
+def api_direccionamiento():
+    """Reglas de direccionamiento por nombre (aplicar/quitar secuencias de costos)."""
+    datos = _datos_request()
+    accion = str(datos.get("accion") or "listar").strip().lower()
+
+    if accion == "guardar":
+        cfg = mono.guardar_direccionamiento(datos.get("reglas") or datos.get("direccionamiento"))
+        return jsonify({"ok": True, "config": cfg})
+
+    if accion == "borrar":
+        cfg = mono.borrar_regla(datos.get("id"))
+        return jsonify({"ok": True, "config": cfg})
+
+    if accion == "activar":
+        cfg = mono.activar_regla(datos.get("id"))
+        return jsonify({"ok": True, "config": cfg})
+
+    if accion in ("desactivar", "quitar"):
+        cfg = mono.desactivar_regla()
+        return jsonify({"ok": True, "config": cfg})
+
+    if accion == "restaurar":
+        ok, msgs = mono.restaurar_todos(SESIONES)
+        return jsonify({"ok": True, "config": mono.config(), "resultado": msgs})
+
+    estado = mono.estado_direccionamiento()
+    estado["caminos"] = mono.caminos_vigentes(SESIONES)
+    return jsonify({"ok": True, "config": mono.config(), "estado": estado})
 
 
 @app.route("/api/capacidades", methods=["POST"])

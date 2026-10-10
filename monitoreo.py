@@ -42,7 +42,7 @@ _lock = threading.RLock()
 _poll_lock = threading.Lock()
 _muestra = {}
 _config = {"capacidad-default": CAPACIDAD_DEFECTO, "saturado-pct": SATURADO_PCT_DEFECTO,
-           "capacidades": {}, "alarmas": []}
+           "capacidades": {}, "alarmas": [], "direccionamiento": [], "regla-activa": None}
 _ruta = [None]
 _estados = {}
 _eventos = []
@@ -53,6 +53,9 @@ _cache_rid = {}
 _mem_nodos = {}     # nid -> {"nodo": {...}, "ts": t}  (para no borrar routers caidos)
 _mem_enlaces = {}   # (host, iface) -> {"peer_host","peer_iface","peer_nodo","ts"}
 _rutas_cache = {}   # host -> (ts, {destino: interfaz-Salida})
+_aplicado = {}      # (host, iface) -> {"costo": int, "origen": str}  (lo que el motor dejó puesto)
+_fallback = {}      # (host, iface) -> {"costo": int, "alarma": id}  (costo "normal" al liberar)
+DIAS = ("lun", "mar", "mie", "jue", "vie", "sab", "dom")
 
 
 def iniciar(dir_datos):
@@ -72,6 +75,19 @@ def iniciar(dir_datos):
         _config.setdefault("saturado-pct", SATURADO_PCT_DEFECTO)
         _config.setdefault("capacidades", {})
         _config.setdefault("alarmas", [])
+        _config.setdefault("direccionamiento", [])
+        _config.setdefault("regla-activa", None)
+        # Recordar los costos que el motor había dejado puestos: si la app se
+        # cierra o reinicia, el reconciliador puede devolverlos a dinámico.
+        _aplicado.clear()
+        for it in (_config.get("aplicado") or []):
+            try:
+                _aplicado[(str(it["equipo"]), str(it["interfaz"]))] = {
+                    "costo": int(it["costo"]),
+                    "origen": str(it.get("origen") or ""),
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
     return ruta
 
 
@@ -85,6 +101,11 @@ def _guardar():
             "saturado-pct": _config.get("saturado-pct", SATURADO_PCT_DEFECTO),
             "capacidades": dict(_config.get("capacidades") or {}),
             "alarmas": [dict(a) for a in (_config.get("alarmas") or [])],
+            "regla-activa": _config.get("regla-activa"),
+            "direccionamiento": [dict(r) for r in (_config.get("direccionamiento") or [])],
+            "aplicado": [{"equipo": h, "interfaz": i,
+                          "costo": v.get("costo"), "origen": v.get("origen") or ""}
+                         for (h, i), v in _aplicado.items()],
         }
     try:
         with open(ruta, "w", encoding="utf-8") as f:
@@ -100,6 +121,8 @@ def config():
             "saturado-pct": _config.get("saturado-pct", SATURADO_PCT_DEFECTO),
             "capacidades": dict(_config.get("capacidades") or {}),
             "alarmas": [dict(a) for a in (_config.get("alarmas") or [])],
+            "direccionamiento": [dict(r) for r in (_config.get("direccionamiento") or [])],
+            "regla-activa": _config.get("regla-activa"),
             "ruta": _ruta[0] or "",
         }
 
@@ -190,8 +213,188 @@ def borrar_alarma(aid):
         for clave in list(_estados):
             if clave.split("|", 1)[0] == str(aid):
                 _estados.pop(clave, None)
+        for par in list(_fallback):
+            if str(_fallback[par].get("alarma")) == str(aid):
+                _fallback.pop(par, None)
     _guardar()
     return config()
+
+
+def _normalizar_entrada(e):
+    """Valida una entrada de direccionamiento: equipo + interfaz + costo."""
+    if not isinstance(e, dict):
+        return None
+    equipo = str(e.get("equipo") or "").strip()
+    interfaz = str(e.get("interfaz") or "").strip()
+    if not equipo or not interfaz:
+        return None
+    try:
+        costo = int(float(e.get("costo")))
+    except (TypeError, ValueError):
+        return None
+    return {
+        "equipo": equipo,
+        "interfaz": interfaz,
+        "costo": max(1, min(65535, costo)),
+        "enlace": bool(e.get("enlace", True)),
+        "rol": "evitar" if str(e.get("rol") or "").lower() == "evitar" else "ruta",
+    }
+
+
+def _normalizar_horario(h):
+    """Franja horaria opcional: {desde, hasta, dias[]}. Vacía/invalidada = None."""
+    if not isinstance(h, dict):
+        return None
+    desde = str(h.get("desde") or "").strip()
+    hasta = str(h.get("hasta") or "").strip()
+    if not desde or not hasta:
+        return None
+    dias = h.get("dias")
+    if dias is None:
+        dias = []
+    if isinstance(dias, str):
+        dias = [d.strip() for d in dias.split(",") if d.strip()]
+    dias = [str(d).lower()[:3] for d in dias if str(d).lower()[:3] in DIAS]
+    return {"desde": desde, "hasta": hasta, "dias": dias}
+
+
+def guardar_direccionamiento(lista):
+    """Guarda las reglas de direccionamiento (con nombre) aplicando validación."""
+    limpias = []
+    ids = set()
+    for r in (lista or []):
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("id") or "").strip() or f"dir-{len(limpias) + 1}"
+        if rid in ids:
+            continue
+        r = dict(r)
+        r["id"] = rid
+        r["nombre"] = str(r.get("nombre") or rid).strip() or rid
+        r.setdefault("habilitada", True)
+        r["origen"] = str(r.get("origen") or "").strip()
+        r["destino"] = str(r.get("destino") or "").strip()
+        r["horario"] = _normalizar_horario(r.get("horario"))
+        entradas = []
+        for e in (r.get("entradas") or []):
+            n = _normalizar_entrada(e)
+            if n:
+                entradas.append(n)
+        r["entradas"] = entradas
+        ids.add(rid)
+        limpias.append(r)
+    with _lock:
+        _config["direccionamiento"] = limpias
+        if str(_config.get("regla-activa")) not in ids:
+            _config["regla-activa"] = None
+    _guardar()
+    return config()
+
+
+def borrar_regla(rid):
+    with _lock:
+        _config["direccionamiento"] = [r for r in (_config.get("direccionamiento") or [])
+                                       if str(r.get("id")) != str(rid)]
+        if str(_config.get("regla-activa")) == str(rid):
+            _config["regla-activa"] = None
+    _guardar()
+    return config()
+
+
+def activar_regla(rid):
+    """Marca una regla como la activa de forma manual (regla-activa)."""
+    with _lock:
+        existe = any(str(r.get("id")) == str(rid)
+                     for r in (_config.get("direccionamiento") or []))
+        _config["regla-activa"] = str(rid) if existe else None
+    _guardar()
+    return config()
+
+
+def desactivar_regla():
+    with _lock:
+        _config["regla-activa"] = None
+    _guardar()
+    return config()
+
+
+def _minutos(hhmm):
+    try:
+        partes = str(hhmm).split(":")
+        return int(partes[0]) * 60 + int(partes[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _horario_cumple(horario, ahora_epoch=None):
+    """True si la hora actual cae dentro de la franja (soporta cruce de medianoche)."""
+    if not horario:
+        return False
+    desde = _minutos(horario.get("desde"))
+    hasta = _minutos(horario.get("hasta"))
+    if desde is None or hasta is None:
+        return False
+    lt = time.localtime(ahora_epoch if ahora_epoch is not None else time.time())
+    dias = horario.get("dias") or []
+    if dias and DIAS[lt.tm_wday] not in dias:
+        return False
+    ahora_min = lt.tm_hour * 60 + lt.tm_min
+    if desde <= hasta:
+        return desde <= ahora_min < hasta
+    return ahora_min >= desde or ahora_min < hasta
+
+
+def regla_vigente(ahora_epoch=None):
+    """Regla que debe estar aplicada ahora.
+
+    Prioridad: la activada a mano (regla-activa) gana mientras esté puesta y
+    habilitada; si no hay ninguna manual, manda la primera que cumpla su
+    horario. Así activar una regla cambia de inmediato y no se "pelean" dos
+    reglas por ver quién gana.
+
+    Devuelve (regla|None, modo) con modo en {'manual', 'horario', None}.
+    """
+    with _lock:
+        reglas = [dict(r) for r in (_config.get("direccionamiento") or [])]
+        activa = _config.get("regla-activa")
+    if activa:
+        for r in reglas:
+            if r.get("habilitada", True) and str(r.get("id")) == str(activa):
+                return r, "manual"
+    for r in reglas:
+        if not r.get("habilitada", True):
+            continue
+        if _horario_cumple(r.get("horario"), ahora_epoch):
+            return r, "horario"
+    return None, None
+
+
+def caminos_vigentes(sesiones, topo=None):
+    """Caminos OSPF de la regla vigente (origen→destino) para el panel."""
+    if topo is None:
+        try:
+            topo = topologia(sesiones)
+        except Exception:  # noqa: BLE001
+            topo = {"nodos": [], "enlaces": []}
+    regla, _modo = regla_vigente()
+    try:
+        return _caminos_regla(topo, sesiones, regla)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def estado_direccionamiento(ahora_epoch=None):
+    """Regla vigente y costos que el motor tiene aplicados ahora mismo."""
+    regla, modo = regla_vigente(ahora_epoch)
+    with _lock:
+        aplicado = [{"equipo": h, "interfaz": i, "costo": v.get("costo"),
+                     "origen": v.get("origen") or ""}
+                    for (h, i), v in _aplicado.items()]
+    aplicado.sort(key=lambda x: (x["equipo"], x["interfaz"]))
+    vigente = None
+    if regla is not None:
+        vigente = {"id": regla.get("id"), "nombre": regla.get("nombre"), "modo": modo}
+    return {"vigente": vigente, "aplicado": aplicado}
 
 
 def _entero(v):
@@ -245,7 +448,7 @@ def _utilizacion(fila, cap):
 def _identidad(api, host):
     with _lock:
         v = _cache_id.get(host)
-    if v and time.time() - v[1] < 600:
+    if v and v[0] and time.time() - v[1] < 600:
         return v[0]
     try:
         nombre = tm.identidad(api)
@@ -346,6 +549,91 @@ def _rutas_de(sesiones, host):
             pass
     _rutas_cache[host] = (ahora, mapa)
     return mapa
+
+
+def _mapas_traza(topo):
+    """Mapas auxiliares para trazar un camino sobre la topología detectada."""
+    peer_itf = {}
+    for e in topo.get("enlaces", []):
+        a, b = e.get("a"), e.get("b")
+        if a and b and a.get("equipo") and b.get("equipo"):
+            peer_itf[(a["equipo"], a["interfaz"])] = (b["equipo"], b["interfaz"])
+            peer_itf[(b["equipo"], b["interfaz"])] = (a["equipo"], a["interfaz"])
+    host_a_rid = {}
+    rid_a_host = {}
+    for n in topo.get("nodos", []):
+        rid = n.get("router-id")
+        host = n.get("host")
+        if rid and host:
+            host_a_rid[host] = rid
+            rid_a_host[rid] = host
+    return peer_itf, rid_a_host, host_a_rid
+
+
+def _host_de_nodo(topo, ref):
+    """Resuelve una referencia (host, identidad, nodo o router-id) a host."""
+    ref = str(ref or "").strip()
+    if not ref:
+        return ""
+    for n in topo.get("nodos", []):
+        if ref in (n.get("host"), n.get("id"), n.get("identidad"), n.get("router-id")):
+            return str(n.get("host") or "")
+    return ""
+
+
+def _caminos_regla(topo, sesiones, regla):
+    """Camino(s) OSPF entre el origen y el destino declarados en la regla.
+
+    Devuelve una lista de caminos, cada uno con las aristas (equipo/interfaz)
+    y la secuencia de nodos. Vacío si la regla no define origen y destino.
+    """
+    if not regla:
+        return []
+    ho = _host_de_nodo(topo, regla.get("origen"))
+    hd = _host_de_nodo(topo, regla.get("destino"))
+    if not ho or not hd or ho == hd:
+        return []
+    peer_itf, _, host_a_rid = _mapas_traza(topo)
+    rid_dest = host_a_rid.get(hd, "")
+    if not rid_dest:
+        return []
+
+    def rec(host, saltos, visto):
+        if host in visto or saltos > 8:
+            return [[]]
+        if host == hd:
+            return [[]]
+        visto = visto | {host}
+        salidas = _rutas_de(sesiones, host).get(rid_dest + "/32") or set()
+        out = []
+        for itf in sorted(salidas):
+            edge = (host, itf)
+            peer = peer_itf.get(edge)
+            if not peer or peer[0] == hd:
+                out.append([edge])
+                continue
+            for s in rec(peer[0], saltos + 1, visto):
+                out.append([edge] + s)
+        return out
+
+    caminos = []
+    for camino in rec(ho, 0, set()):
+        if not camino:
+            continue
+        nodos = [ho]
+        actual = ho
+        for eq, itf in camino:
+            peer = peer_itf.get((eq, itf))
+            if peer and peer[0] != actual:
+                actual = peer[0]
+                nodos.append(actual)
+        if nodos[-1] != hd:
+            nodos.append(hd)
+        caminos.append({
+            "aristas": [{"equipo": eq, "interfaz": itf} for eq, itf in camino],
+            "nodos": nodos,
+        })
+    return caminos
 
 
 def _armar_topologia(recogidos, sesiones=None):
@@ -852,20 +1140,87 @@ def eventos_desde(seq=0):
         return [dict(e) for e in _eventos if int(e.get("seq") or 0) > int(seq or 0)]
 
 
-def _aplicar_costo_automatico(sesiones, topo, host, iface, costo):
-    mensajes = []
-    extremos = _extremos(topo, host, iface)
-    for eq, itf in extremos:
+def _host_por_equipo(equipo, equipos):
+    """Traduce lo que el usuario escribió (host o identidad) al host real."""
+    equipo = str(equipo or "").strip()
+    if not equipo:
+        return None
+    for e in equipos:
+        if equipo in (e.get("host"), e.get("identidad")):
+            return e.get("host") or equipo
+    return equipo
+
+
+def _pares_de_entrada(topo, equipos, entrada):
+    """Extremos afectados por una entrada (equipo/interfaz) de una regla."""
+    host = _host_por_equipo(entrada.get("equipo"), equipos)
+    if not host:
+        return []
+    iface = str(entrada.get("interfaz") or "")
+    if entrada.get("enlace", True):
+        return _extremos(topo, host, iface)
+    return [(host, iface)]
+
+
+def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
+    """Lleva los costos OSPF al estado deseado.
+
+    Prioridad: alarma activa > regla de direccionamiento vigente > costo
+    "normal" recordado > dinámico. Solo envía a los equipos la diferencia
+    contra lo que ya había aplicado, así no reinicia OSPF en cada ciclo.
+    """
+    deseado = {}   # (host, iface) -> costo
+    origen = {}    # (host, iface) -> etiqueta de dónde sale el costo
+    regla, modo = regla_vigente()
+    if regla is not None:
+        etq = f"regla {(regla.get('nombre') or regla.get('id'))}"
+        for ent in regla.get("entradas") or []:
+            for par in _pares_de_entrada(topo, equipos, ent):
+                deseado[par] = int(ent["costo"])
+                origen[par] = etq
+    with _lock:
+        fallback = dict(_fallback)
+    for par, info in fallback.items():
+        if par not in deseado:
+            deseado[par] = int(info.get("costo") or 0)
+            origen[par] = "costo normal"
+    for ef in efectos_alarma or []:
+        etq = f"alarma {ef.get('nombre') or ef.get('alarma') or ''}".strip()
+        for par in _pares_de_entrada(topo, equipos,
+                                     {"equipo": ef.get("equipo"),
+                                      "interfaz": ef.get("interfaz"),
+                                      "enlace": True}):
+            deseado[par] = int(ef["costo"])
+            origen[par] = etq
+    with _lock:
+        aplicado = dict(_aplicado)
+    cambios = []
+    for par in set(aplicado) | set(deseado):
+        quieren = deseado.get(par)
+        tienen = aplicado.get(par, {}).get("costo")
+        if quieren == tienen:
+            continue
+        eq, itf = par
         api = (sesiones.get(eq) or {}).get("api")
         if not api:
-            mensajes.append(f"sin sesión para {eq}")
             continue
-        err = tm.fijar_costo_ospf(api, itf, costo)
+        err = tm.fijar_costo_ospf(api, itf, quieren)
         if err:
-            mensajes.append(err)
-    with _lock:
-        _topo["ts"] = 0.0
-    return mensajes
+            cambios.append(err)
+            continue
+        if quieren is None:
+            with _lock:
+                _aplicado.pop(par, None)
+            cambios.append(f"{eq} {itf}: costo dinámico")
+        else:
+            with _lock:
+                _aplicado[par] = {"costo": quieren, "origen": origen.get(par, "")}
+            cambios.append(f"{eq} {itf}: costo {quieren}")
+    if cambios:
+        with _lock:
+            _topo["ts"] = 0.0
+        _guardar()
+    return cambios
 
 
 def _evaluar_alarmas(sesiones, topo, equipos, ahora):
@@ -873,10 +1228,15 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
 
     La regla se evalua por cada interfaz que matchea su alcance
     (equipo/identidad y patron de interfaz), asi que una sola regla
-    puede disparar varias instancias a la vez. El cambio de costo solo
-    ocurre cuando la regla esta marcada como automatica.
+    puede disparar varias instancias a la vez. El cambio de costo no se
+    aplica aca: se devuelve la lista de 'efectos' activos y el
+    reconciliador (con prioridad sobre las reglas de direccionamiento) es
+    el que deja los costos puestos.
+
+    Devuelve (resumen, efectos).
     """
     alarmas = config().get("alarmas") or []
+    efectos = []
     resumen = []
     orden_sev = {"info": 1, "alerta": 2, "critico": 3}
     for al in alarmas:
@@ -925,18 +1285,29 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                     accion_txt = ""
                     if accion == "automatica":
                         costo = al.get("costo")
+                        try:
+                            costo = int(float(costo)) if costo is not None else None
+                        except (TypeError, ValueError):
+                            costo = None
                         if costo is not None:
-                            previos = []
-                            for eq2, itf2 in _extremos(topo, host, iface):
-                                lado = _lado_de(topo, eq2, itf2)
-                                if lado and lado.get("costo") is not None:
-                                    previos.append((eq2, itf2, lado["costo"]))
-                            est["costos"] = previos
-                            erros = _aplicar_costo_automatico(
-                                sesiones, topo, host, iface, costo)
-                            accion_txt = (f"costo {costo} aplicado al enlace"
-                                          if not erros else "; ".join(erros))
+                            efectos.append({
+                                "equipo": host, "interfaz": iface,
+                                "costo": max(1, min(65535, costo)),
+                                "alarma": al["id"],
+                                "nombre": al.get("nombre") or al["id"],
+                            })
+                            accion_txt = f"costo {costo} al enlace (prioridad alarma)"
                             mensaje += f" -> {accion_txt}"
+                        cn = al.get("costo-normal")
+                        try:
+                            cn = int(float(cn)) if cn is not None else None
+                        except (TypeError, ValueError):
+                            cn = None
+                        if cn is not None:
+                            with _lock:
+                                for par in _extremos(topo, host, iface):
+                                    _fallback[par] = {"costo": max(1, min(65535, cn)),
+                                                      "alarma": al["id"]}
                     _nuevo_evento(tipo="activada", alarma=al["id"],
                                    nombre=al.get("nombre") or al["id"],
                                    severidad=severidad, equipo=host,
@@ -949,20 +1320,8 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                     est["desde"] = ahora
                     mensaje = (f"{eq_datos.get('identidad') or host} {iface}: "
                                f"{metrica}={valor} recuperada")
-                    if accion == "automatica" and est.get("costos"):
-                        destino = al.get("costo-normal")
-                        if destino is not None:
-                            try:
-                                destino = int(destino)
-                            except (TypeError, ValueError):
-                                destino = None
-                        erros = _aplicar_costo_automatico(
-                            sesiones, topo, host, iface, destino)
-                        etiqueta = ("costo dinámico restaurado"
-                                    if destino is None
-                                    else f"costo {destino} restaurado")
-                        mensaje += (f" ({etiqueta})"
-                                    if not erros else " (" + "; ".join(erros) + ")")
+                    if accion == "automatica":
+                        mensaje += " (vuelve a la regla de direccionamiento activa)"
                     est["costos"] = []
                     _nuevo_evento(tipo="desactivada", alarma=al["id"],
                                    nombre=al.get("nombre") or al["id"],
@@ -1009,7 +1368,7 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                 "duracion-s": dur,
                 "limpiar-s": limpia,
             })
-    return resumen
+    return resumen, efectos
 
 
 def _lado_de(topo, host, iface):
@@ -1033,7 +1392,17 @@ def poll(sesiones, hosts=None):
         with _lock:
             _topo.clear()
             _topo.update(topo)
-        alarmas = _evaluar_alarmas(sesiones, topo, equipos, time.time())
+        alarmas, efectos = _evaluar_alarmas(sesiones, topo, equipos, time.time())
+        cambios = _reconciliar_costos(sesiones, topo, equipos, efectos)
+        if cambios:
+            topo = _armar_topologia(recogidos, sesiones) if recogidos else topo
+            topo["ts"] = time.time()
+            with _lock:
+                _topo.clear()
+                _topo.update(topo)
+        regla_vig, _modo = regla_vigente()
+        dir_estado = estado_direccionamiento()
+        dir_estado["caminos"] = _caminos_regla(topo, sesiones, regla_vig)
         with _lock:
             ultimo = _seq[0]
     return {
@@ -1042,8 +1411,50 @@ def poll(sesiones, hosts=None):
         "equipos": equipos,
         "alarmas": alarmas,
         "topologia": topo,
+        "direccionamiento": dir_estado,
         "seq": ultimo,
     }
+
+
+def restaurar_todos(sesiones, hosts=None):
+    """Devuelve TODOS los costos OSPF a dinámico (borra las filas estáticas).
+
+    Sirve para limpiar de golpe lo que el motor o cambios manuales hayan
+    dejado puesto, incluso si la app se reinició y perdió el registro."""
+    elegidos = [h for h in (hosts or list(sesiones)) if h in sesiones]
+    msgs = []
+    ok = True
+    for host in elegidos:
+        api = (sesiones.get(host) or {}).get("api")
+        if not api:
+            continue
+        try:
+            filas = tm.ospf_interfaces_lista(api)
+        except Exception as e:  # noqa: BLE001
+            msgs.append(f"{host}: {e}")
+            ok = False
+            continue
+        for f in filas:
+            if not f.get("estatico"):
+                continue
+            err = tm.fijar_costo_ospf(api, f.get("interfaz"), None)
+            if err:
+                msgs.append(err)
+                ok = False
+            else:
+                msgs.append(f"{host} {f.get('interfaz')}: costo dinámico")
+    with _lock:
+        _aplicado.clear()
+        _fallback.clear()
+        _topo["ts"] = 0.0
+    _guardar()
+    return ok, msgs
+
+
+def ultimo_poll():
+    """Marca de tiempo del último ciclo completo (para el hilo de fondo)."""
+    with _lock:
+        return float(_topo.get("ts") or 0.0)
 
 
 def metricas(sesiones, hosts=None):

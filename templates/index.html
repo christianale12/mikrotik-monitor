@@ -317,6 +317,12 @@
   .moni-detalle { margin-top: 10px; padding: 10px 12px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border); border-radius: 8px; }
   .moni-detalle .btn { padding: 6px 10px; font-size: 12px; min-width: auto; }
   .moni-costo { width: 80px; padding: 6px 8px; margin-right: 6px; }
+  .dir-entrada { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+  .dir-entrada .dir-equipo { width: 190px; }
+  .dir-entrada .dir-iface { width: 150px; }
+  .dir-entrada .dir-costo { width: 90px; }
+  .dir-entrada input { padding: 6px 8px; font-size: 12px; }
+  .dir-entrada .chk { font-size: 12px; }
 
   .moni-fila-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
   .moni-fila-form select, .moni-fila-form input { padding: 7px 9px; font-size: 12px; }
@@ -487,6 +493,7 @@
               <button class="moni-tab activa" data-tab="trafico" onclick="moniTab('trafico')">📈 Tráfico</button>
               <button class="moni-tab" data-tab="topologia" onclick="moniTab('topologia')">🕸 Topología</button>
               <button class="moni-tab" data-tab="alarmas" onclick="moniTab('alarmas')">🚨 Alarmas <span class="moni-badge vacio" id="badge-alarmas">0</span></button>
+              <button class="moni-tab" data-tab="direccionamiento" onclick="moniTab('direccionamiento')">🛣 Direccionamiento</button>
               <button class="moni-tab" data-tab="metricas" onclick="moniTab('metricas')">📏 Métricas OSPF</button>
             </div>
             <div class="moni-refresco">
@@ -1234,6 +1241,8 @@ const MONI = {
   equipos: [], alarmas: [], topo: { nodos: [], enlaces: [] },
   eventos: [], cfg: { alarmas: [], capacidades: {}, "capacidad-default": 100000000 },
   metricas: null, selEnlace: null, editAlarma: null, filtroNodo: "",
+  dir: { vigente: null, aplicado: [], caminos: [] }, editRegla: null,
+  camino: { nodos: [], aristas: [] }, grafoFull: false,
   sonido: true, notifPedida: false, audio: null,
   slots: null, hist: {},
 };
@@ -1369,6 +1378,7 @@ function moniProcesar(data) {
   MONI.seq = data.seq || MONI.seq;
   MONI.equipos = data.equipos || [];
   MONI.alarmas = data.alarmas || [];
+  if (data.direccionamiento) MONI.dir = data.direccionamiento;
   if (data.topologia) MONI.topo = data.topologia;
   for (const ev of data.eventos || []) {
     if (MONI.eventos.some(e => e.seq === ev.seq)) continue;
@@ -1389,6 +1399,7 @@ function moniRender(force) {
     if (MONI.tab === "trafico") cuerpo.innerHTML = moniTraficoHTML();
     else if (MONI.tab === "topologia") cuerpo.innerHTML = moniTopologiaHTML();
     else if (MONI.tab === "alarmas") cuerpo.innerHTML = moniAlarmasHTML();
+    else if (MONI.tab === "direccionamiento") cuerpo.innerHTML = moniDireccionamientoHTML();
     else cuerpo.innerHTML = moniMetricasHTML();
   } catch (e) {
     cuerpo.innerHTML = `<div class="banner-error">Error al dibujar: ${moniEsc(e.message)}</div>`;
@@ -1548,11 +1559,15 @@ function moniTopologiaHTML() {
   if (!nodos.length) return `<div class="banner-info">Todavía no hay topología detectada (esperá la primera lectura de OSPF).</div>`;
   const { pos, W, H } = moniLayout();
   const colEstado = { full: "#10b981", degradado: "#f59e0b", "sin-ospf": "#64748b", caido: "#ef4444", "un-lado": "#64748b" };
-  const COL_SAT = "#f59e0b", COL_REENVIO = "#a855f7", LINGER = 10000;
+  const COL_SAT = "#f59e0b", COL_REENVIO = "#a855f7", COL_DIR = "#22d3ee", LINGER = 10000;
   const umbral = Number(MONI.cfg["saturado-pct"]) || 80;
   const ahora = Date.now();
   const hist = MONI.hist || (MONI.hist = {});
   const histNodo = MONI.histNodo || (MONI.histNodo = {});
+  const dirPares = new Map();
+  for (const a of (MONI.dir && MONI.dir.aplicado) || []) dirPares.set(a.equipo + "|" + a.interfaz, a);
+  const dirCamino = new Set();
+  for (const c of (MONI.dir && MONI.dir.caminos) || []) for (const ar of c.aristas || []) dirCamino.add(ar.equipo + "|" + ar.interfaz);
 
   // Estado "efectivo" por enlace: mantiene el color del evento hasta 10 s
   // después de normalizarse, para que se vea la vuelta a la normalidad.
@@ -1584,19 +1599,29 @@ function moniTopologiaHTML() {
     if (!na || !pos[na] || !nb || !pos[nb]) return;
     const pa = pos[na], pb = pos[nb];
     const st = est[idx];
+    const parA = la && (la.equipo + "|" + la.interfaz);
+    const parB = lb && (lb.equipo + "|" + lb.interfaz);
+    const dA = parA ? dirPares.get(parA) : null;
+    const dB = parB ? dirPares.get(parB) : null;
+    const dlink = (dA && /^regla/.test(dA.origen || "")) ? dA : ((dB && /^regla/.test(dB.origen || "")) ? dB : null);
+    const esCamino = (parA && dirCamino.has(parA)) || (parB && dirCamino.has(parB));
+    const enDir = dlink || esCamino;
+    const color = (enDir && !st.cur.reenvio && !st.cur.saturado && st.cur.estado === "full") ? COL_DIR : st.color;
     const pct = Math.min(100, Number(e.pct) || 0);
-    const ancho = Math.max(1.5, Math.min(7, 1.5 + pct / 20)) + (st.cur.reenvio ? 1.5 : 0);
+    const ancho = Math.max(1.5, Math.min(7, 1.5 + pct / 20)) + (st.cur.reenvio ? 1.5 : 0) + (enDir ? 1 : 0);
     const dash = (!st.cur.reenvio && st.cur.estado !== "full") ? ` stroke-dasharray="7,5"` : "";
-    lin += `<line class="linea${st.cur.reenvio ? " reenvio" : ""}" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke="${st.color}" stroke-width="${ancho}"${dash} opacity="${st.op.toFixed(2)}"/>`;
+    lin += `<line class="linea${st.cur.reenvio ? " reenvio" : ""}" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke="${color}" stroke-width="${ancho}"${dash} opacity="${st.op.toFixed(2)}"/>`;
     lin += `<line class="linea-hit" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke-width="16" onclick="moniSelEnlace(${idx})" cursor="pointer"/>`;
     const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
     const total = Math.max(Number(la && la["total-bps"]) || 0, Number(lb && lb["total-bps"]) || 0);
     etiq += `<text class="enlace-etiqueta" x="${mx}" y="${my - 6}">${moniEsc(e.red)} · ${moniBps(total)}</text>`;
-    let marca = "";
+    let marca = "", marcaColor = st.color;
     if (st.cur.reenvio) marca = "ruta de reenvío";
     else if (st.cur.saturado) marca = "saturado " + pct.toFixed(0) + "%";
     else if (st.cur.estado !== "full") marca = st.cur.estado;
-    if (marca) etiq += `<text x="${mx}" y="${my + 9}" text-anchor="middle" font-size="10" font-weight="700" fill="${st.color}">${moniEsc(marca)}${st.linger ? " → normal" : ""}</text>`;
+    else if (dlink) { marca = dlink.origen; marcaColor = COL_DIR; }
+    else if (esCamino) { marca = "camino regla"; marcaColor = COL_DIR; }
+    if (marca) etiq += `<text x="${mx}" y="${my + 9}" text-anchor="middle" font-size="10" font-weight="700" fill="${marcaColor}">${moniEsc(marca)}${st.linger ? " → normal" : ""}</text>`;
     if (total > 0) {
       const n = pct >= 40 ? 3 : (pct >= 10 ? 2 : 1);
       const dur = Math.max(0.8, 4 - 3 * pct / 100);
@@ -1647,6 +1672,7 @@ function moniTopologiaHTML() {
     <span><i class="sw" style="background:${COL_SAT}"></i>enlace saturado (≥ ${umbral}%)</span>
     <span><i class="sw" style="background:#ef4444"></i>enlace caído</span>
     <span><i class="sw" style="background:${COL_REENVIO}"></i>ruta de reenvío</span>
+    <span><i class="sw" style="background:${COL_DIR}"></i>camino por regla de direccionamiento</span>
     <span style="width:100%"></span>
     <span><i class="pt" style="border-color:#38bdf8"></i>router OK</span>
     <span><i class="pt" style="border-color:#ef4444"></i>router saturado</span>
@@ -1786,7 +1812,7 @@ function moniFormAlarmaHTML() {
   const dflt = (k, d) => (al[k] === undefined || al[k] === null || al[k] === "" ? d : al[k]);
   const sevs = ["info", "alerta", "critico"];
   const accs = [["ninguna", "ninguna (solo avisa)"], ["manual", "manual (solo avisa)"], ["automatica", "automática (aplica costo)"]];
-  const metricas = ["total-bps", "rx-bps", "tx-bps", "pct"];
+  const metricas = [["total-bps", "Total"], ["rx-bps", "RX"], ["tx-bps", "TX"], ["pct", "% saturación"]];
   const ops = [">", ">=", "<", "<=", "==", "!="];
   const hostOpts = moniListaHosts().map(h => `<option value="${moniEsc(h)}"></option>`).join("");
   const pill = (v, txt, actual, primero) =>
@@ -1802,11 +1828,11 @@ function moniFormAlarmaHTML() {
     ${c("fa-nombre", "Nombre", `<input id="fa-nombre" class="largo" placeholder="p. ej. Congestión R1-R2" value="${moniEsc(al.nombre || "")}" oninput="moniFormTemp()">`)}
     ${c("fa-equipo", "Equipo (vacío = todos)", `<input id="fa-equipo" placeholder="IP o identidad" list="moni-hosts" value="${moniEsc(al.equipo || "")}" oninput="moniFormTemp()"><datalist id="moni-hosts">${hostOpts}</datalist>`)}
     ${c("fa-interfaz", "Interfaz (patrón)", `<input id="fa-interfaz" placeholder="ether3, ether*…" value="${moniEsc(al.interfaz || "*")}" oninput="moniFormTemp()">`)}
-    ${c("fa-metrica", "Métrica", `${pills("fa-metrica", metricas, dflt("metrica", "total-bps"))}`)}
+    ${c("fa-metrica", "Métrica", `<div class="moni-pills" id="fa-metrica">${metricas.map(([v, t]) => `<button type="button" class="moni-pill${dflt("metrica", "total-bps") === v ? " activa" : ""}" data-val="${moniEsc(v)}" onclick="moniPillMetrica(this)">${moniEsc(t)}</button>`).join("")}</div>`)}
     ${c("fa-op", "Comparar", `${pills("fa-op", ops, dflt("operador", ">="))}`)}
-    ${c("fa-umbral", "Umbral", `<div style="display:flex;gap:6px;align-items:center">
-      <input id="fa-umbral" type="number" step="any" placeholder="p. ej. 50" value="${moniEsc(umbralVal)}" oninput="moniFormTemp()">
-      <select id="fa-umbral-unidad" onchange="moniFormTemp()"${esPct ? ' style="display:none"' : ""}>
+    ${c("fa-umbral", "Umbral (valor)", `<div style="display:flex;gap:6px;align-items:center">
+      <input id="fa-umbral" type="number" step="any" inputmode="decimal" style="flex:1 1 auto;min-width:90px;width:100%" placeholder="p. ej. 50" value="${moniEsc(umbralVal)}" oninput="moniFormTemp()">
+      <select id="fa-umbral-unidad" style="flex:0 0 auto" onchange="moniFormTemp()"${esPct ? ';display:none' : ""}>
         <option value="bps"${unidad === "bps" ? " selected" : ""}>b/s</option>
         <option value="kbps"${unidad === "kbps" ? " selected" : ""}>kb/s</option>
         <option value="mbps"${unidad === "mbps" ? " selected" : ""}>Mb/s</option>
@@ -1841,6 +1867,12 @@ function marcarPill(btn) {
   const g = btn.closest(".moni-pills");
   if (!g) return;
   g.querySelectorAll(".moni-pill").forEach(b => b.classList.toggle("activa", b === btn));
+}
+
+function moniPillMetrica(btn) {
+  marcarPill(btn);
+  moniFormTemp();
+  moniRender(true);
 }
 
 function moniUmbralDeFormulario(def) {
@@ -2032,6 +2064,532 @@ function moniCapBorrar(clave) {
   delete caps[clave];
   moniPost("/api/capacidades", { accion: "guardar", default: MONI.cfg["capacidad-default"], capacidades: caps }).then(d => {
     if (d && d.ok) { MONI.cfg = d.config || MONI.cfg; moniRender(true); }
+  });
+}
+
+/* ---------- Tab Direccionamiento ---------- */
+function moniDirHostsOpts() {
+  return moniListaHosts().map(h => `<option value="${moniEsc(h)}"></option>`).join("");
+}
+
+function moniDirIfacesOpts() {
+  const set = new Set();
+  for (const e of MONI.topo.enlaces || []) for (const l of [e.a, e.b]) {
+    if (l && l.interfaz && l.interfaz !== "?") set.add(l.interfaz);
+  }
+  for (const e of (MONI.metricas && MONI.metricas.equipos) || []) for (const i of e.interfaces || []) {
+    if (i.interfaz) set.add(i.interfaz);
+  }
+  return [...set].map(x => `<option value="${moniEsc(x)}"></option>`).join("");
+}
+
+function moniDirHorarioTxt(r) {
+  const h = r.horario;
+  if (!h) return "manual";
+  const dias = (h.dias && h.dias.length) ? h.dias.map(d => d[0].toUpperCase() + d.slice(1)).join(" ") : "todos los días";
+  return `${moniEsc(h.desde)}–${moniEsc(h.hasta)} · ${moniEsc(dias)}`;
+}
+
+function moniDirFilaHTML(ent) {
+  const e = ent || {};
+  return `<div class="dir-entrada">
+    <input class="dir-equipo" list="dir-hosts" placeholder="equipo (IP o identidad)" value="${moniEsc(e.equipo || "")}">
+    <input class="dir-iface" list="dir-ifaces" placeholder="interfaz" value="${moniEsc(e.interfaz || "")}">
+    <input class="dir-costo" type="number" min="1" max="65535" placeholder="costo" value="${e.costo ?? ""}">
+    <select class="dir-rol" title="Ruta = camino elegido · Evitar = encarecer este enlace">
+      <option value="ruta"${e.rol === "evitar" ? "" : " selected"}>ruta</option>
+      <option value="evitar"${e.rol === "evitar" ? " selected" : ""}>evitar</option>
+    </select>
+    <label class="chk"><input type="checkbox" class="dir-enlace" ${e.enlace === false ? "" : "checked"}> los dos extremos</label>
+    <button type="button" class="btn btn-red" style="min-width:auto;padding:3px 8px" onclick="this.closest('.dir-entrada').remove()">✕</button>
+  </div>`;
+}
+
+function moniDirAgregarFila() {
+  const c = $("dir-entradas");
+  if (!c) return;
+  c.insertAdjacentHTML("beforeend", moniDirFilaHTML({ enlace: true }));
+}
+
+function moniDirLeerEntradas() {
+  const out = [];
+  document.querySelectorAll("#dir-entradas .dir-entrada").forEach(r => {
+    const equipo = (r.querySelector(".dir-equipo").value || "").trim();
+    const interfaz = (r.querySelector(".dir-iface").value || "").trim();
+    const costo = Number(r.querySelector(".dir-costo").value);
+    if (!equipo || !interfaz || !costo) return;
+    const rol = r.querySelector(".dir-rol");
+    out.push({ equipo, interfaz, costo, enlace: r.querySelector(".dir-enlace").checked,
+               rol: rol ? rol.value : "ruta" });
+  });
+  return out;
+}
+
+/* --- Mini-grafo para armar el camino de la regla con clics --- */
+const COL_DIR_D = "#22d3ee";
+const COL_EVIT_D = "#f59e0b";
+
+function moniNodoInfo(id) {
+  return (MONI.topo.nodos || []).find(n => n.id === id) || null;
+}
+
+function moniReglaEnEdicion() {
+  if (MONI.editRegla) return MONI.editRegla;
+  const d = MONI.dir || {};
+  if (!d.reglaActiva) return null;
+  return (d.reglas || []).find(r => r.id === d.reglaActiva) || null;
+}
+
+function moniAristasEvitar() {
+  const out = new Set();
+  const r = moniReglaEnEdicion();
+  const ents = (r && r.entradas) || [];
+  const claves = new Set(ents.filter(e => (e.rol || "ruta") === "evitar")
+                               .map(e => e.equipo + "|" + e.interfaz));
+  if (!claves.size) return out;
+  (MONI.topo.enlaces || []).forEach((e, idx) => {
+    const p = moniPuntas(e);
+    if (!p.a || !p.b) return;
+    if (claves.has(p.a.host + "|" + p.a.iface) || claves.has(p.b.host + "|" + p.b.iface)) out.add(idx);
+  });
+  return out;
+}
+
+function moniPuntas(e) {
+  const la = e.a, lb = e.b || null;
+  const p = { a: null, b: null };
+  if (la && la.nodo) p.a = { nodo: la.nodo, host: la.equipo || "", iface: la.interfaz || "" };
+  if (lb && lb.nodo) p.b = { nodo: lb.nodo, host: lb.equipo || "", iface: lb.interfaz || "" };
+  else if (la && la["nodo-externo"]) p.b = { nodo: la["nodo-externo"], host: "", iface: "?" };
+  return p;
+}
+
+function moniGrafoSVG() {
+  const nodos = MONI.topo.nodos || [];
+  const enlaces = MONI.topo.enlaces || [];
+  if (!nodos.length) return `<div class="banner-info">Todavía no hay topología detectada (esperá la primera lectura).</div>`;
+  const { pos, W, H } = moniLayout();
+  const c = MONI.camino || { nodos: [], aristas: [] };
+  const enCamino = new Set(c.nodos);
+  const aristasSel = new Set(c.aristas.map(a => a.idx));
+  const evitar = moniAristasEvitar();
+  let lin = "", nod = "";
+  enlaces.forEach((e, idx) => {
+    const p = moniPuntas(e);
+    if (!p.a || !p.b) return;
+    const pa = pos[p.a.nodo], pb = pos[p.b.nodo];
+    if (!pa || !pb) return;
+    const sel = aristasSel.has(idx);
+    const evit = !sel && evitar.has(idx);
+    lin += `<line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke="${sel ? COL_DIR_D : (evit ? COL_EVIT_D : "#475569")}" stroke-width="${sel ? 7 : (evit ? 4 : 3)}" stroke-linecap="round" opacity="${sel || evit ? 1 : 0.7}"${evit ? ' stroke-dasharray="6 4"' : ""}/>`;
+    lin += `<line x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke-width="20" stroke="transparent" cursor="pointer" onclick="moniCaminoEnlace(${idx})"/>`;
+  });
+  for (const n of nodos) {
+    const p = pos[n.id];
+    if (!p) continue;
+    const sel = enCamino.has(n.id);
+    const nombre = n.identidad || n.id;
+    const r = n.externo ? 15 : 24;
+    nod += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="#0b1120" stroke="${sel ? COL_DIR_D : (n.externo ? "#64748b" : "#38bdf8")}" stroke-width="${sel ? 5 : 2.5}" cursor="${n.externo ? "default" : "pointer"}" onclick="moniCaminoNodo(moniJsStr('${moniEsc(n.id)}'))"/>`;
+    nod += `<text x="${p.x}" y="${p.y - (n.externo ? 0 : 2)}" text-anchor="middle" font-size="${n.externo ? 13 : 14}" font-weight="800" fill="#e2e8f0">${moniEsc(nombre)}</text>`;
+    if (!n.externo) nod += `<text x="${p.x}" y="${p.y + 15}" text-anchor="middle" font-size="10" fill="#94a3b8">${moniEsc(n.host || "")}</text>`;
+    else nod += `<text x="${p.x}" y="${p.y + 14}" text-anchor="middle" font-size="10" fill="#94a3b8">externo</text>`;
+  }
+  const svg = `<svg viewBox="0 0 ${W} ${H}" ${MONI.grafoFull ? 'style="width:100%;height:100%"' : 'class="grafo"'}>${lin}${nod}</svg>`;
+  if (MONI.grafoFull) {
+    return `<div style="position:fixed;inset:0;z-index:300;background:#05070e;padding:14px;box-sizing:border-box;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <b style="color:#7dd3fc">Armar camino (mapa ampliado)</b>
+        <span style="font-size:12px;color:var(--text-muted)">clics en routers y enlaces · Detalle: <span id="dir-camino-resumen2" style="font-family:Consolas,monospace;color:${COL_DIR_D}"></span></span>
+        <button class="btn btn-amber" style="margin-left:auto" onclick="MONI.grafoFull=false;moniCaminoRefrescar()">✕ Cerrar</button>
+      </div>
+      <div style="flex:1;min-height:0">${svg}</div>
+    </div>`;
+  }
+  return svg;
+}
+
+function moniCaminoNodo(id) {
+  const info = moniNodoInfo(id);
+  if (!info || info.externo) return;
+  const c = MONI.camino || (MONI.camino = { nodos: [], aristas: [] });
+  const ult = c.nodos[c.nodos.length - 1];
+  if (!c.nodos.length) c.nodos = [id];
+  else if (ult !== id) { c.nodos = [id]; c.aristas = []; }
+  moniCaminoRefrescar();
+}
+
+function moniCaminoEnlace(idx) {
+  const e = (MONI.topo.enlaces || [])[idx];
+  if (!e) return;
+  const p = moniPuntas(e);
+  if (!p.a || !p.b) return;
+  const c = MONI.camino || (MONI.camino = { nodos: [], aristas: [] });
+  if (!c.nodos.length) {
+    const ia = moniNodoInfo(p.a.nodo);
+    c.nodos = [(ia && !ia.externo) ? p.a.nodo : p.b.nodo];
+  }
+  const desde = c.nodos[c.nodos.length - 1];
+  let hacia = null;
+  if (p.a.nodo === desde) hacia = p.b.nodo;
+  else if (p.b.nodo === desde) hacia = p.a.nodo;
+  else return;
+  const ultA = c.aristas[c.aristas.length - 1];
+  if (ultA && ultA.idx === idx) return;
+  c.aristas.push({ idx, desde });
+  c.nodos.push(hacia);
+  moniCaminoRefrescar();
+}
+
+function moniCaminoReiniciar() {
+  MONI.camino = { nodos: [], aristas: [] };
+  moniCaminoRefrescar();
+}
+
+function moniCaminoForzar() {
+  const c = MONI.camino || { nodos: [], aristas: [] };
+  if (c.nodos.length < 2 || !c.aristas.length) {
+    moniToast({ titulo: "Sin camino", texto: "Marcá primero el camino con clics en el mapa.", sev: "info" });
+    return;
+  }
+  const n = v => Number(($(v) || {}).value) || 0;
+  const costoRuta = n("dir-costo-camino") || 1;
+  const costoEvitar = n("dir-costo-evitar") || 65535;
+  const sel = new Set(c.aristas.map(a => a.idx));
+  const enlaces = MONI.topo.enlaces || [];
+  const ents = [];
+  const ladoInterno = p => (p.a && p.a.host) ? p.a : (p.b && p.b.host ? p.b : null);
+  const ambosInternos = p => !!(p.a && p.a.host && p.b && p.b.host);
+  for (const ar of c.aristas) {                       // ruta elegida: costo bajo
+    const e = enlaces[ar.idx];
+    if (!e) continue;
+    const p = moniPuntas(e);
+    const from = ladoInterno(p);
+    if (from) ents.push({ equipo: from.host, interfaz: from.iface, costo: costoRuta, enlace: true, rol: "ruta" });
+  }
+  enlaces.forEach((e, idx) => {                        // alternativos router-router: costo alto
+    if (sel.has(idx)) return;
+    const p = moniPuntas(e);
+    if (!p.a || !p.b || !ambosInternos(p)) return;
+    ents.push({ equipo: p.a.host, interfaz: p.a.iface, costo: costoEvitar, enlace: true, rol: "evitar" });
+  });
+  const alt = ents.length - c.aristas.length;
+  if (!confirm("Se pondrán " + c.aristas.length + " enlace(s) de la ruta a costo " + costoRuta +
+      " y " + alt + " enlace(s) alternativo(s) a costo " + costoEvitar + ".\n\n" +
+      "Esto cambia TODO el enrutamiento OSPF de esos routers, no solo hacia este destino: " +
+      "otro tráfico también usará esta ruta y, si un tramo se cae, no habrá camino alternativo.\n\n¿Continuar?")) return;
+  const cont = $("dir-entradas");
+  if (cont) cont.innerHTML = ents.map(moniDirFilaHTML).join("");
+  const draft = MONI.editRegla || {};
+  draft.entradas = ents;
+  MONI.editRegla = draft;
+  moniToast({ titulo: "Camino forzado", texto: `${c.aristas.length} enlace(s) a costo ${costoRuta}; ${alt} alternativo(s) a ${costoEvitar}. Guardá la regla y esperá la convergencia de OSPF.`, sev: "ok" });
+}
+
+function moniCaminoEntradas() {
+  const c = MONI.camino || { nodos: [], aristas: [] };
+  const costo = Number(($("dir-costo-camino") || {}).value) || 10;
+  const out = [];
+  for (const ar of c.aristas) {
+    const e = (MONI.topo.enlaces || [])[ar.idx];
+    if (!e) continue;
+    const p = moniPuntas(e);
+    const from = (p.a && p.a.nodo === ar.desde) ? p.a : (p.b && p.b.nodo === ar.desde ? p.b : null);
+    if (!from || !from.host) continue;
+    out.push({ equipo: from.host, interfaz: from.iface, costo, enlace: true, rol: "ruta" });
+  }
+  return out;
+}
+
+function moniCaminoRefrescar() {
+  const g = $("dir-grafo");
+  if (g) g.innerHTML = moniGrafoSVG();
+  const c = MONI.camino || { nodos: [], aristas: [] };
+  const txt = c.nodos.length ? (c.nodos.map(id => { const i = moniNodoInfo(id); return (i && (i.identidad || i.id)) || id; }).join(" → ") + "  (" + c.aristas.length + " enlace/s)") : "sin camino";
+  for (const idr of ["dir-camino-resumen", "dir-camino-resumen2"]) {
+    const el = $(idr);
+    if (el) el.textContent = txt;
+  }
+  const ents = moniCaminoEntradas();
+  const cont = $("dir-entradas");
+  if (cont && ents.length) cont.innerHTML = ents.map(moniDirFilaHTML).join("");
+  const org = $("dir-origen"), dst = $("dir-destino");
+  if (org && c.nodos.length) { const i = moniNodoInfo(c.nodos[0]); if (i && !i.externo) org.value = i.host || c.nodos[0]; }
+  if (dst && c.nodos.length) { const i = moniNodoInfo(c.nodos[c.nodos.length - 1]); if (i) dst.value = i.host || c.nodos[c.nodos.length - 1]; }
+  // Persistir el borrador para que sobreviva al refresco periódico de la pestaña.
+  const draft = MONI.editRegla || {};
+  if (org && c.nodos.length) draft.origen = org.value;
+  if (dst && c.nodos.length) draft.destino = dst.value;
+  if (ents.length) draft.entradas = ents;
+  MONI.editRegla = draft;
+}
+
+function moniReconstruirCamino(ed) {
+  MONI.camino = { nodos: [], aristas: [] };
+  if (!ed || !ed.entradas || !ed.entradas.length) return;
+  const enlaces = MONI.topo.enlaces || [];
+  const claves = new Set(ed.entradas.filter(x => (x.rol || "ruta") !== "evitar")
+                                     .map(x => x.equipo + "|" + x.interfaz));
+  const candidatos = [];
+  enlaces.forEach((e, idx) => {
+    const p = moniPuntas(e);
+    if (!p.a || !p.b) return;
+    if (claves.has(p.a.host + "|" + p.a.iface) || claves.has(p.b.host + "|" + p.b.iface)) {
+      candidatos.push({ idx, p });
+    }
+  });
+  if (!candidatos.length) return;
+  let actual = (ed.origen || "").trim();
+  if (!actual) {
+    const ia = moniNodoInfo(candidatos[0].p.a.nodo);
+    actual = (ia && !ia.externo) ? candidatos[0].p.a.host : candidatos[0].p.b.host;
+  }
+  const usado = new Set();
+  let seguir = true;
+  while (seguir) {
+    seguir = false;
+    for (const cand of candidatos) {
+      if (usado.has(cand.idx)) continue;
+      const { p } = cand;
+      let desde = null, hacia = null;
+      if (p.a.host === actual) { desde = p.a.nodo; hacia = p.b; }
+      else if (p.b.host === actual) { desde = p.b.nodo; hacia = p.a; }
+      else continue;
+      usado.add(cand.idx);
+      if (!MONI.camino.nodos.length) MONI.camino.nodos.push(desde);
+      MONI.camino.aristas.push({ idx: cand.idx, desde });
+      MONI.camino.nodos.push(hacia.nodo);
+      actual = hacia.host;
+      seguir = true;
+      break;
+    }
+  }
+}
+
+function moniReglaAviso(r) {
+  if (!r || !(r.entradas || []).length) return "";
+  const enlaces = MONI.topo.enlaces || [];
+  if (!enlaces.length) return "";
+  const clave = (h, i) => h + "|" + i;
+  const cub = new Set((r.entradas || []).map(e => clave(e.equipo, e.interfaz)));
+  const cubiertos = new Set();
+  enlaces.forEach((e, idx) => {
+    const p = moniPuntas(e);
+    if (!p.a || !p.b) return;
+    if (cub.has(clave(p.a.host, p.a.iface)) || cub.has(clave(p.b.host, p.b.iface))) cubiertos.add(idx);
+  });
+  if (!cubiertos.size) return "";
+  const nodos = new Set();
+  cubiertos.forEach(idx => { const p = moniPuntas(enlaces[idx]); if (p.a) nodos.add(p.a.nodo); if (p.b) nodos.add(p.b.nodo); });
+  let alt = 0;
+  enlaces.forEach((e, idx) => {
+    if (cubiertos.has(idx)) return;
+    const p = moniPuntas(e);
+    if (!p.a || !p.b || !p.a.host || !p.b.host) return;
+    if (nodos.has(p.a.nodo) || nodos.has(p.b.nodo)) alt++;
+  });
+  if (!alt) return "";
+  return `<div class="banner-info" style="border-color:#f59e0b;color:#fbbf24;margin-top:6px">⚠ Esta regla solo ajusta ${cubiertos.size} enlace(s) de la ruta y hay ${alt} enlace(s) alternativo(s) que no toca, que OSPF podría usar (por eso el camino solo se mantiene mientras una alarma encarece esos enlaces). Para forzar el camino sin depender de alarmas, armalo con el mapa y usá <b>🚫 Forzar este camino</b>.</div>`;
+}
+
+function moniDireccionamientoHTML() {
+  const reglas = MONI.cfg.direccionamiento || [];
+  const activa = MONI.cfg["regla-activa"];
+  const vig = MONI.dir && MONI.dir.vigente;
+  const ed = MONI.editRegla || {};
+  // Si no estamos editando, mostramos siempre el camino de la regla vigente
+  // para que "el camino seleccionado" quede fijo en el mapa tras aplicar.
+  if (!MONI.editRegla && (!MONI.camino || !MONI.camino.nodos.length) && vig) {
+    const rv = reglas.find(r => String(r.id) === String(vig.id));
+    if (rv) moniReconstruirCamino(rv);
+  }
+  let html = `<div class="moni-sub">Estado</div>`;
+  html += vig
+    ? `<div class="banner-info">Regla vigente: <b>${moniEsc(vig.nombre)}</b> (${moniEsc(vig.modo)}) — los costos OSPF los manda esta regla salvo que una alarma los sobreescriba.</div>`
+    : `<div class="banner-info">Ninguna regla activa: los costos quedan en dinámico salvo alarmas automáticas.</div>`;
+  const apl = (MONI.dir && MONI.dir.aplicado) || [];
+  if (apl.length) {
+    html += `<table><thead><tr><th>Equipo</th><th>Interfaz</th><th>Costo aplicado</th><th>Origen</th></tr></thead><tbody>`;
+    for (const a of apl) {
+      html += `<tr><td>${moniEsc(a.equipo)}</td><td><b>${moniEsc(a.interfaz)}</b></td><td>${a.costo}</td><td style="font-size:12px;color:var(--text-muted)">${moniEsc(a.origen || "—")}</td></tr>`;
+    }
+    html += "</tbody></table>";
+  } else {
+    html += `<div class="banner-info">Sin costos aplicados por el motor en este momento.</div>`;
+  }
+
+  const cams = (MONI.dir && MONI.dir.caminos) || [];
+  if (cams.length) {
+    html += `<div class="moni-sub">Camino(s) de la regla vigente (origen → destino)</div>`;
+    for (const c of cams) {
+      html += `<div class="banner-info" style="font-family:Consolas,monospace">${c.nodos.map(n => moniEsc(n)).join(" → ")}</div>`;
+    }
+  }
+  const reglaVig = vig ? reglas.find(r => String(r.id) === String(vig.id)) : null;
+  html += moniReglaAviso(reglaVig);
+
+  html += `<div class="moni-sub">${ed.id ? "Editar regla" : "Nueva regla de direccionamiento"}</div>`;
+  html += `<div class="moni-fila-form">
+    <div class="moni-campo"><span class="moni-lbl">Nombre</span><input id="dir-nombre" class="largo" placeholder="p. ej. trafico-mañana" value="${moniEsc(ed.nombre || "")}"></div>
+    <div class="moni-campo"><span class="moni-lbl">Origen (para mostrar el camino)</span><input id="dir-origen" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.origen || "")}"></div>
+    <div class="moni-campo"><span class="moni-lbl">Destino</span><input id="dir-destino" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.destino || "")}"></div>
+    <div class="moni-campo"><span class="moni-lbl">Horario desde (opcional)</span><input id="dir-desde" type="time" value="${moniEsc(ed.horario ? ed.horario.desde : "")}"></div>
+    <div class="moni-campo"><span class="moni-lbl">Horario hasta</span><input id="dir-hasta" type="time" value="${moniEsc(ed.horario ? ed.horario.hasta : "")}"></div>
+    <div class="moni-campo"><span class="moni-lbl">Días (vacío = todos)</span><div style="display:flex;gap:8px;flex-wrap:wrap">${["lun","mar","mie","jue","vie","sab","dom"].map(d => `<label class="chk"><input type="checkbox" class="dir-dia" value="${d}" ${ed.horario && (ed.horario.dias || []).indexOf(d) >= 0 ? "checked" : ""}> ${d}</label>`).join("")}</div></div>
+    <div class="moni-campo chk-campo"><span class="moni-lbl">Estado</span><label class="chk"><input type="checkbox" id="dir-habilitada" ${ed.habilitada === false ? "" : "checked"}> habilitada</label></div>
+  </div>
+  <div class="moni-sub" style="margin-top:8px">1) Armá el camino con clics en el mapa</div>
+  <div style="font-size:12px;color:var(--text-muted)">Clic en un router para empezar y luego clic en cada enlace hasta completar el camino. Cada nodo muestra el <b>nombre del router</b> (grande) y su IP (chico). Los elegidos se marcan en <span style="color:${COL_DIR_D}">celeste</span>. Usá <b>⛶ Ampliar mapa</b> si querés verlo más grande y <b>🚫 Forzar este camino</b> para que OSPF tenga que ir por acá.</div>
+  <div style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap">
+    <span class="moni-lbl">Costo de la ruta</span>
+    <input id="dir-costo-camino" type="number" min="1" max="65535" value="1" style="width:90px">
+    <span class="moni-lbl">Costo a evitar</span>
+    <input id="dir-costo-evitar" type="number" min="1" max="65535" value="65535" style="width:100px">
+    <button class="btn btn-red" onclick="moniCaminoForzar()" title="Deja los enlaces elegidos en el costo de la ruta y sube el resto, para forzar el camino">🚫 Forzar este camino</button>
+    <button class="btn btn-dark" onclick="moniCaminoRefrescar()" title="Aplica el costo solo a los enlaces elegidos">Aplicar a la ruta</button>
+    <button class="btn btn-amber" onclick="moniCaminoReiniciar()">⟲ Reiniciar camino</button>
+    <button class="btn btn-dark" onclick="MONI.grafoFull=true;moniCaminoRefrescar()">⛶ Ampliar mapa</button>
+    <span id="dir-camino-resumen" style="font-family:Consolas,monospace;font-size:12px;color:${COL_DIR_D}"></span>
+  </div>
+  <div id="dir-grafo">${moniGrafoSVG()}</div>
+  <div class="moni-sub" style="margin-top:8px">2) Costos de la regla (equipo · interfaz · costo)</div>
+  <datalist id="dir-hosts">${moniDirHostsOpts()}</datalist>
+  <datalist id="dir-ifaces">${moniDirIfacesOpts()}</datalist>
+  <div id="dir-entradas">${(ed.entradas && ed.entradas.length ? ed.entradas : [{}]).map(moniDirFilaHTML).join("")}</div>
+  <div style="margin-top:6px;display:flex;gap:8px">
+    <button class="btn btn-dark" onclick="moniDirAgregarFila()">➕ Agregar entrada</button>
+    <button class="btn btn-green" onclick="moniGuardarRegla()">${ed.id ? "💾 Guardar cambios" : "💾 Guardar regla"}</button>
+    ${ed.id ? `<button class="btn btn-dark" onclick="MONI.editRegla=null;MONI.camino={nodos:[],aristas:[]};moniRender(true)">Cancelar</button>` : ""}
+  </div>`;
+
+  html += `<div class="moni-sub">Reglas configuradas (${reglas.length})</div>`;
+  if (!reglas.length) html += `<div class="banner-info">Todavía no hay reglas de direccionamiento.</div>`;
+  else {
+    html += `<table><thead><tr><th>Nombre</th><th>Horario</th><th>Camino</th><th>Entradas</th><th>Estado</th><th style="width:190px"></th></tr></thead><tbody>`;
+    for (const r of reglas) {
+      const esVig = vig && String(vig.id) === String(r.id);
+      const esManual = String(activa) === String(r.id);
+      let etq = "";
+      if (esVig) etq += `<span class="etq ok">vigente (${moniEsc(vig.modo)})</span> `;
+      else if (esManual) etq += `<span class="etq arn">manual</span> `;
+      if (r.habilitada === false) etq += `<span class="etq down">deshabilitada</span>`;
+      if (!etq) etq = `<span class="etq">—</span>`;
+      html += `<tr>
+        <td><b>${moniEsc(r.nombre || r.id)}</b></td>
+        <td>${moniDirHorarioTxt(r)}</td>
+        <td style="font-family:Consolas,monospace;font-size:12px">${(r.origen || r.destino) ? moniEsc(r.origen || "?") + " → " + moniEsc(r.destino || "?") : "—"}</td>
+        <td>${(r.entradas || []).length}</td>
+        <td>${etq}</td>
+        <td>
+          <button class="btn btn-ospf" onclick="moniAplicarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Aplicar esta regla ahora">▶ Aplicar</button>
+          <button class="btn btn-dark" onclick="moniEditarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Editar">✏️</button>
+          <button class="btn btn-amber" onclick="moniToggleRegla(moniJsStr('${moniEsc(r.id)}'))" title="Habilitar / deshabilitar">${r.habilitada === false ? "▶" : "⏸"}</button>
+          <button class="btn btn-red" onclick="moniBorrarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Borrar">🗑</button>
+        </td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+    html += `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-amber" onclick="moniQuitarRegla()">⟲ Quitar regla manual (volver a dinámico)</button>
+      <button class="btn btn-red" onclick="moniRestaurarTodo()" title="Borra TODOS los costos OSPF estáticos y los deja en dinámico (limpieza total)">🧹 Devolver TODO a costo dinámico</button>
+    </div>`;
+  }
+  return html;
+}
+
+function moniDiasSeleccionados() {
+  return [...document.querySelectorAll(".dir-dia:checked")].map(c => c.value);
+}
+
+function moniGuardarRegla() {
+  const v = id => ($(id) ? $(id).value : "");
+  const desde = v("dir-desde").trim();
+  const hasta = v("dir-hasta").trim();
+  const entradas = moniDirLeerEntradas();
+  if (!entradas.length) {
+    moniToast({ titulo: "Sin entradas", texto: "Agregá al menos un equipo/interfaz con costo.", sev: "info" });
+    return;
+  }
+  const regla = {
+    id: (MONI.editRegla && MONI.editRegla.id) || ("dir-" + Date.now().toString(36)),
+    nombre: v("dir-nombre").trim() || "Regla",
+    origen: v("dir-origen").trim(),
+    destino: v("dir-destino").trim(),
+    habilitada: $("dir-habilitada") ? $("dir-habilitada").checked : true,
+    horario: (desde && hasta) ? { desde, hasta, dias: moniDiasSeleccionados() } : null,
+    entradas,
+  };
+  const lista = (MONI.cfg.direccionamiento || []).filter(r => String(r.id) !== String(regla.id));
+  lista.push(regla);
+  MONI.editRegla = null;
+  MONI.camino = { nodos: [], aristas: [] };
+  moniSalvarReglas(lista, "Regla guardada");
+}
+
+function moniEditarRegla(id) {
+  const r = (MONI.cfg.direccionamiento || []).find(x => String(x.id) === id);
+  MONI.editRegla = r ? JSON.parse(JSON.stringify(r)) : null;
+  moniReconstruirCamino(MONI.editRegla);
+  moniRender(true);
+}
+
+function moniBorrarRegla(id) {
+  const r = (MONI.cfg.direccionamiento || []).find(x => String(x.id) === id);
+  if (!r) return;
+  if (!confirm("¿Borrar la regla '" + (r.nombre || r.id) + "'?")) return;
+  if (MONI.editRegla && String(MONI.editRegla.id) === String(id)) { MONI.editRegla = null; MONI.camino = { nodos: [], aristas: [] }; }
+  const lista = (MONI.cfg.direccionamiento || []).filter(x => String(x.id) !== id);
+  moniSalvarReglas(lista, "Regla borrada");
+}
+
+function moniToggleRegla(id) {
+  const lista = (MONI.cfg.direccionamiento || []).map(r => {
+    if (String(r.id) !== String(id)) return r;
+    return Object.assign({}, r, { habilitada: r.habilitada === false });
+  });
+  moniSalvarReglas(lista);
+}
+
+function moniAplicarRegla(id) {
+  moniPost("/api/direccionamiento", { accion: "activar", id }).then(d => {
+    if (d && d.ok) {
+      MONI.cfg = d.config || MONI.cfg;
+      moniToast({ titulo: "Regla aplicada", texto: "Los costos se aplican en el próximo ciclo.", sev: "ok" });
+      moniRender(true);
+    } else moniToast({ titulo: "No se pudo aplicar", texto: (d && d.error) || "", sev: "info" });
+  });
+}
+
+function moniQuitarRegla() {
+  moniPost("/api/direccionamiento", { accion: "desactivar" }).then(d => {
+    if (d && d.ok) {
+      MONI.cfg = d.config || MONI.cfg;
+      moniToast({ titulo: "Regla quitada", texto: "Se vuelve al costo dinámico salvo alarmas.", sev: "ok" });
+      moniRender(true);
+    }
+  });
+}
+
+function moniRestaurarTodo() {
+  if (!confirm("Se van a borrar TODOS los costos OSPF estáticos de los equipos monitoreados y volverán al valor dinámico.\n\nEsto deshace cualquier camino forzado (reglas y alarmas). ¿Continuar?")) return;
+  moniPost("/api/direccionamiento", { accion: "restaurar" }).then(d => {
+    if (d && d.ok) {
+      MONI.cfg = d.config || MONI.cfg;
+      MONI.camino = { nodos: [], aristas: [] };
+      const n = (d.resultado || []).length;
+      moniToast({ titulo: "Costos restaurados", texto: n + " interfaz(es) devueltas a dinámico.", sev: "ok" });
+      moniRender(true);
+    } else moniToast({ titulo: "No se pudo restaurar", texto: (d && d.error) || "", sev: "info" });
+  });
+}
+
+function moniSalvarReglas(lista, msj) {
+  moniPost("/api/direccionamiento", { accion: "guardar", reglas: lista }).then(d => {
+    if (d && d.ok) {
+      MONI.cfg = d.config || MONI.cfg;
+      if (msj) moniToast({ titulo: msj, texto: lista.length + " regla(s)", sev: "ok" });
+      moniRender(true);
+    } else moniToast({ titulo: "No se pudo guardar", texto: (d && d.error) || "", sev: "info" });
   });
 }
 

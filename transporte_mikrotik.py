@@ -1224,8 +1224,12 @@ def interfaces_con_trafico(api):
 
 
 def identidad(api):
-    """Nombre (identity) del router en una sola consulta."""
-    return _decod(_primero(api, "/system/identity/print").get("identity", ""))
+    """Nombre (identity) del router en una sola consulta.
+
+    En RouterOS la propiedad de /system/identity es "name" (no "identity").
+    """
+    fila = _primero(api, "/system/identity/print") or {}
+    return _decod(fila.get("name", "") or fila.get("identity", ""))
 
 
 def ospf_interfaces_lista(api):
