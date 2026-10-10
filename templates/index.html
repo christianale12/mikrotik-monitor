@@ -1,0 +1,2054 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Monitor MikroTik - RouterOS</title>
+<style>
+  :root {
+    --bg-dark: #060913;
+    --panel-bg: #0f172a;
+    --panel-border: #1e293b;
+    --panel-border-glow: #0284c7;
+
+    --neon-cyan: #38bdf8;
+    --neon-blue: #3b82f6;
+    --cyan-glow: 0 0 15px rgba(56, 189, 248, 0.35);
+    --blue-glow: 0 0 15px rgba(59, 130, 246, 0.35);
+
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+
+    --btn-blue: #2563eb;
+    --btn-blue-hover: #1d4ed8;
+    --btn-green: #10b981;
+    --btn-green-hover: #059669;
+    --btn-red: #ef4444;
+    --btn-red-hover: #dc2626;
+    --btn-dark: #1e293b;
+    --btn-dark-hover: #334155;
+
+    --ok-bg: rgba(16, 185, 129, 0.15);
+    --ok-border: #10b981;
+    --ok-text: #34d399;
+    --err-bg: rgba(239, 68, 68, 0.15);
+    --err-border: #ef4444;
+    --err-text: #fca5a5;
+    --info-bg: rgba(56, 189, 248, 0.1);
+    --info-border: #0284c7;
+    --info-text: #7dd3fc;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; padding: 20px 12px;
+    background: radial-gradient(circle at top, #0f172a 0%, #060913 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 13px; color: var(--text-main);
+    display: flex; justify-content: center; align-items: flex-start; min-height: 100vh;
+  }
+
+  .app-window {
+    background: var(--panel-bg); border-radius: 10px;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), 0 0 20px rgba(2, 132, 199, 0.2);
+    width: 100%; max-width: 960px; overflow: hidden;
+    border: 1px solid rgba(56, 189, 248, 0.25);
+  }
+
+  .window-header {
+    background: #090d16; color: #fff; padding: 14px 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+  }
+  .window-title {
+    font-size: 14px; font-weight: 700; letter-spacing: 0.5px;
+    display: flex; align-items: center; gap: 10px; color: var(--neon-cyan);
+    text-shadow: 0 0 8px rgba(56, 189, 248, 0.5);
+  }
+  .neon-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--neon-cyan); box-shadow: var(--cyan-glow);
+    animation: neon-blink 1.2s ease-in-out infinite;
+  }
+  @keyframes neon-blink {
+    0%, 100% { opacity: 1; box-shadow: 0 0 14px rgba(56,189,248,0.4); }
+    50% { opacity: 0.25; box-shadow: 0 0 3px rgba(56,189,248,0.1); }
+  }
+
+  .content-body { padding: 18px 20px 22px; }
+
+  .banner-info {
+    background: var(--info-bg); border: 1px solid var(--info-border);
+    color: var(--info-text); padding: 10px 14px; border-radius: 6px;
+    margin-bottom: 16px; font-weight: 500;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .banner-ok {
+    background: var(--ok-bg); border: 1px solid var(--ok-border);
+    color: var(--ok-text); padding: 10px 16px; border-radius: 6px;
+    margin-bottom: 16px; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .banner-error {
+    background: var(--err-bg); border: 1px solid var(--err-border);
+    color: var(--err-text); padding: 10px 16px; border-radius: 6px;
+    margin-bottom: 16px; font-weight: 600;
+  }
+
+  fieldset {
+    border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 14px; margin-bottom: 14px;
+    background: rgba(15, 23, 42, 0.5);
+  }
+  legend {
+    color: var(--neon-cyan); font-weight: 700; font-size: 12px;
+    letter-spacing: 1px; text-transform: uppercase; padding: 0 8px;
+  }
+
+  .fila { display: flex; gap: 12px; flex-wrap: wrap; }
+  .fila > div { flex: 1; min-width: 140px; }
+
+  label { display: block; margin-bottom: 5px; color: var(--text-muted); font-size: 12px; }
+
+  input:not([type="checkbox"]):not([type="radio"]), select {
+    width: 100%; padding: 9px 11px; border-radius: 6px;
+    background: #0b1120; border: 1px solid var(--panel-border);
+    color: var(--text-main); font-size: 13px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--neon-cyan); box-shadow: 0 0 8px rgba(56,189,248,0.3); }
+
+  .btn {
+    border: none; border-radius: 6px; padding: 10px 16px;
+    font-weight: 600; font-size: 13px; cursor: pointer; color: #fff;
+    transition: all 0.2s ease;
+  }
+  .btn-blue {
+    background: linear-gradient(135deg, var(--btn-blue), #1e40af);
+    box-shadow: 0 0 12px rgba(37, 99, 235, 0.4);
+  }
+  .btn-blue:hover { background: linear-gradient(135deg, #1d4ed8, #1e3a8a); transform: translateY(-1px); }
+  .btn-green {
+    background: linear-gradient(135deg, var(--btn-green), #047857);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+  }
+  .btn-green:hover { background: linear-gradient(135deg, #059669, #065f46); transform: translateY(-1px); }
+  .btn-red {
+    background: linear-gradient(135deg, var(--btn-red), #b91c1c);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.35);
+  }
+  .btn-red:hover { background: linear-gradient(135deg, #dc2626, #991b1b); transform: translateY(-1px); }
+  .btn-dark {
+    background: linear-gradient(135deg, var(--btn-dark), #0f172a);
+    border: 1px solid var(--panel-border);
+  }
+  .btn-dark:hover { background: linear-gradient(135deg, #334155, #1e293b); transform: translateY(-1px); }
+  .btn-amber {
+    background: linear-gradient(135deg, #f59e0b, #b45309);
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.35);
+  }
+  .btn-amber:hover { background: linear-gradient(135deg, #fbbf24, #d97706); transform: translateY(-1px); }
+  .btn-ospf {
+    background: linear-gradient(135deg, #6366f1, #4338ca);
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
+  }
+  .btn-ospf:hover { background: linear-gradient(135deg, #818cf8, #4f46e5); transform: translateY(-1px); }
+
+  .acciones-sesion {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 16px;
+  }
+  .acciones-sesion .btn { flex: 1; min-width: 150px; }
+
+  .opciones-yaml {
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+    padding: 10px 12px; background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--panel-border); border-radius: 8px; margin-top: 6px;
+  }
+  .opciones-yaml-titulo { color: var(--text-muted); font-size: 12px; font-weight: 600; }
+  .chk { color: #cbd5e1; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  .chk input { accent-color: var(--neon-cyan); cursor: pointer; }
+
+  .preview-cab {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 12px; margin-top: 14px;
+    background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border);
+    border-radius: 8px 8px 0 0; color: var(--neon-cyan); font-size: 13px;
+  }
+  .preview-cab .btn { flex: 0; min-width: auto; padding: 8px 14px; }
+  .preview-yml {
+    background: #0a0f1d; color: #a5f3fc; font-family: Consolas, monospace;
+    font-size: 12px; line-height: 1.5; padding: 14px;
+    border: 1px solid var(--panel-border); border-top: none;
+    border-radius: 0 0 8px 8px;
+    max-height: 320px; overflow: auto; white-space: pre; margin-bottom: 16px;
+  }
+
+  .diff-lista { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; max-height: 380px; overflow: auto; }
+  .diff-fila {
+    display: flex; gap: 8px; padding: 7px 10px; border-radius: 6px;
+    font-size: 12px; font-family: Consolas, monospace; word-break: break-all;
+    border: 1px solid var(--panel-border);
+  }
+  .diff-ico { font-weight: 800; min-width: 18px; }
+  .diff-txt b { font-weight: 700; }
+  .diff-fila .btn { margin-left: auto; }
+  .diff-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap; margin-bottom: 10px; padding: 8px 10px;
+    background: rgba(34, 211, 238, 0.06); border: 1px solid rgba(34, 211, 238, 0.25);
+    border-radius: 8px;
+  }
+  .diff-fila .chk-diff {
+    margin-right: 4px; accent-color: var(--neon-cyan); cursor: pointer;
+    width: 15px; height: 15px; min-width: 15px; flex: 0 0 auto;
+    padding: 0; border: none; background: transparent;
+  }
+  .diff-fila { align-items: flex-start; }
+  .diff-fila .diff-txt { flex: 1; }
+  .diff-elimina .btn { display: none; }
+  .diff-agrega .btn { display: none; }
+  .diff-agrega { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.35) !important; }
+  .diff-elimina { background: rgba(239, 68, 68, 0.12); color: #f87171; border-color: rgba(239, 68, 68, 0.35) !important; }
+  .diff-cambia { background: rgba(59, 130, 246, 0.12); color: #60a5fa; border-color: rgba(59, 130, 246, 0.35) !important; }
+
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(2, 6, 23, 0.75);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+  }
+  .modal-caja {
+    background: #0b1120; border: 1px solid var(--neon-cyan);
+    border-radius: 10px; padding: 20px; max-width: 460px; width: 90%;
+    box-shadow: 0 0 24px rgba(34, 211, 238, 0.3);
+  }
+  .modal-ruta {
+    background: #0a0f1d; border: 1px solid var(--panel-border); border-radius: 6px;
+    padding: 10px; font-family: Consolas, monospace; font-size: 13px;
+    color: var(--neon-cyan); word-break: break-all; margin-bottom: 6px;
+  }
+
+  .grid-estado {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px; margin-bottom: 16px;
+  }
+  .tarjeta {
+    background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 12px; text-align: center;
+  }
+  .tarjeta .k { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .tarjeta .v { color: var(--neon-cyan); font-size: 16px; font-weight: 700; margin-top: 4px; }
+
+  .lista-hosts { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .item-host {
+    display: flex; align-items: center; gap: 14px;
+    background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 12px 14px; cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .item-host:hover { border-color: var(--neon-cyan); box-shadow: 0 0 14px rgba(34, 211, 238, 0.25); }
+  .item-host.seleccionado { border-color: var(--neon-cyan); box-shadow: 0 0 14px rgba(34, 211, 238, 0.4); background: rgba(8, 145, 178, 0.12); }
+  .item-host .ip { color: var(--neon-cyan); font-size: 16px; font-weight: 700; min-width: 130px; }
+  .item-host .info { flex: 1; font-size: 12px; color: var(--text-muted); }
+  .item-host .info b { color: #e2e8f0; }
+  .item-host .flecha { color: var(--neon-blue); font-size: 18px; }
+
+  table {
+    width: 100%; border-collapse: collapse; margin-top: 10px;
+    background: #0b1120; border-radius: 8px; overflow: hidden;
+  }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #172033; font-size: 12px; }
+  th { background: #0f172a; color: var(--neon-cyan); text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+  tr:hover td { background: rgba(56, 189, 248, 0.05); }
+  td.arriba { color: #34d399; }
+  td.abajo { color: #f87171; }
+
+  .oculto { display: none; }
+  .cargando { color: var(--neon-blue); padding: 10px 0; font-weight: 500; animation: neon-blink 1.2s infinite; }
+
+  /* ===== Monitoreo en vivo ===== */
+  .moni-barra { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .moni-pestanas { display: flex; gap: 6px; flex-wrap: wrap; }
+  .moni-tab {
+    background: #0b1120; border: 1px solid var(--panel-border); color: var(--text-muted);
+    border-radius: 6px; padding: 7px 12px; font-weight: 600; font-size: 12px; cursor: pointer;
+  }
+  .moni-tab:hover { border-color: var(--neon-cyan); color: #e2e8f0; }
+  .moni-tab.activa {
+    background: rgba(56, 189, 248, 0.12); border-color: var(--neon-cyan);
+    color: var(--neon-cyan); box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+  }
+  .moni-badge { display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px; background: #ef4444; color: #fff; font-size: 10px; line-height: 16px; text-align: center; margin-left: 3px; }
+  .moni-badge.vacio { background: #334155; }
+  .moni-refresco { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+  .moni-refresco select { width: auto; padding: 6px 8px; }
+  .moni-refresco .btn { padding: 6px 10px; font-size: 12px; min-width: auto; }
+  .moni-estado { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+
+  .moni-resumen { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .moni-resumen .tarjeta { padding: 8px; }
+  .moni-resumen .tarjeta .v { font-size: 14px; }
+
+  .barra { position: relative; background: #0b1120; border: 1px solid var(--panel-border); border-radius: 4px; height: 14px; min-width: 90px; overflow: hidden; }
+  .barra > i { display: block; height: 100%; background: linear-gradient(90deg, #10b981, #34d399); transition: width .6s ease; }
+  .barra.ambar > i { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+  .barra.rojo > i { background: linear-gradient(90deg, #ef4444, #f87171); }
+  .barra .txt { position: absolute; inset: 0; font-size: 10px; line-height: 14px; text-align: center; color: #0b1120; font-weight: 700; }
+
+  .etq { display: inline-block; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .etq.arn { background: #334155; color: #e2e8f0; }
+  .etq.info { background: rgba(56, 189, 248, 0.15); color: #7dd3fc; }
+  .etq.alerta { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+  .etq.critico { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+  .etq.ok { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+  .etq.down { background: rgba(239, 68, 68, 0.25); color: #fca5a5; }
+
+  .grafo { width: 100%; background: radial-gradient(circle at 50% 40%, #0d1526 0%, #070c17 100%); border: 1px solid var(--panel-border); border-radius: 8px; }
+  .grafo .linea { stroke-linecap: round; }
+  .grafo .linea-hit { stroke: transparent; }
+  .grafo .nodo-etiqueta { font-size: 13px; font-weight: 800; fill: #e2e8f0; text-anchor: middle; }
+  .grafo .nodo-sub { font-size: 10px; fill: #94a3b8; text-anchor: middle; }
+  .grafo .enlace-etiqueta { font-size: 10px; fill: #7dd3fc; text-anchor: middle; font-family: Consolas, monospace; }
+  .grafo .linea.reenvio { stroke-dasharray: 10,6; animation: moniDash 1s linear infinite; }
+  @keyframes moniDash { to { stroke-dashoffset: -16; } }
+  .grafo .nodo-circulo.mem { opacity: .55; }
+  .moni-leyenda { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 11px; color: var(--text-muted); margin: 4px 0 8px; }
+  .moni-leyenda .sw { display: inline-block; width: 24px; height: 4px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .moni-leyenda .pt { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #38bdf8; background: #0b1120; margin-right: 6px; vertical-align: middle; }
+
+  .moni-detalle { margin-top: 10px; padding: 10px 12px; background: rgba(15, 23, 42, 0.6); border: 1px solid var(--panel-border); border-radius: 8px; }
+  .moni-detalle .btn { padding: 6px 10px; font-size: 12px; min-width: auto; }
+  .moni-costo { width: 80px; padding: 6px 8px; margin-right: 6px; }
+
+  .moni-fila-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .moni-fila-form select, .moni-fila-form input { padding: 7px 9px; font-size: 12px; }
+  .moni-fila-form .largo { grid-column: span 2; }
+  .moni-fila-form .moni-campo { display: flex; flex-direction: column; gap: 3px; min-width: 110px; }
+  .moni-fila-form .moni-lbl { font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+  .moni-fila-form .moni-campo.chk-campo { justify-content: flex-end; }
+  .moni-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+  .moni-pill {
+    padding: 6px 9px; border-radius: 6px; border: 1px solid var(--panel-border);
+    background: #0b1120; color: var(--text-main); font-size: 12px; cursor: pointer;
+    font-family: inherit; text-align: left;
+  }
+  .moni-pill:hover { border-color: var(--neon-cyan); }
+  .moni-pill.activa { background: rgba(56, 189, 248, 0.18); border-color: var(--neon-cyan); color: #7dd3fc; font-weight: 700; }
+  .moni-select { display: inline-block; position: relative; vertical-align: middle; }
+  .moni-select-btn {
+    padding: 7px 12px; border-radius: 6px; border: 1px solid var(--panel-border);
+    background: #0b1120; color: #7dd3fc; font-size: 12px; font-weight: 600; cursor: pointer;
+    font-family: inherit;
+  }
+  .moni-select-btn:hover { border-color: var(--neon-cyan); }
+  .moni-select-lista {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 50;
+    min-width: 280px; max-height: 280px; overflow: auto;
+    background: #0f172a; border: 1px solid var(--panel-border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); padding: 4px;
+  }
+  .moni-select-lista.oculto { display: none; }
+  .moni-select-item {
+    display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 6px;
+    border: none; background: transparent; color: var(--text-main); font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .moni-select-item:hover { background: rgba(56, 189, 248, 0.12); color: #7dd3fc; }
+  .moni-select-item.activa { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; font-weight: 700; }
+
+  .moni-eventos { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+  .moni-evento { padding: 5px 8px; border-radius: 5px; background: rgba(15, 23, 42, 0.5); border: 1px solid var(--panel-border); color: #cbd5e1; }
+  .moni-evento b { color: #e2e8f0; }
+  .moni-hora { color: var(--text-muted); font-size: 10px; margin-right: 6px; font-family: Consolas, monospace; }
+
+  .moni-toasts { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 300; width: 330px; }
+  .toast {
+    background: #0b1120; border-left: 4px solid var(--neon-cyan); border-radius: 6px;
+    padding: 10px 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6); font-size: 12px;
+    cursor: pointer; animation: toast-in 0.25s ease;
+  }
+  .toast .t-titulo { font-weight: 700; margin-bottom: 3px; }
+  .toast.critico { border-left-color: #ef4444; }
+  .toast.alerta { border-left-color: #f59e0b; }
+  .toast.info { border-left-color: #38bdf8; }
+  .toast.ok { border-left-color: #10b981; }
+  @keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+
+  .moni-sub { color: var(--neon-cyan); font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin: 12px 0 6px; }
+</style>
+</head>
+<body>
+
+<div class="app-window">
+  <div class="window-header">
+    <div class="window-title">
+      <div class="neon-dot"></div>
+      MONITOR MIKROTIK — ROUTEROS API
+    </div>
+  </div>
+
+  <div class="content-body">
+
+    <!-- Paso 1: Detectar y conectar -->
+    <div id="panel-login">
+      <div class="banner-info">
+        <div class="neon-dot"></div>
+        Detecta el MikroTik en tu red local y conéctate por la API (puerto 8728)
+      </div>
+
+      <fieldset>
+        <legend>Detección y Acceso</legend>
+        <div class="acciones-sesion" style="margin-top:4px;">
+          <button class="btn btn-dark" onclick="escanear()">🔍 Escanear red local</button>
+          <button class="btn btn-dark" onclick="ubicacionManual()">✏️ Poner IP a mano</button>
+        </div>
+
+        <div id="resultado-escaner" class="oculto"></div>
+
+        <div class="fila" style="margin-top:14px;">
+          <div style="flex:2;">
+            <label>IP seleccionada</label>
+            <input id="host" name="host" value="192.168.88.1" placeholder="Seleccionala de la lista arriba">
+          </div>
+          <div>
+            <label>Usuario</label>
+            <input id="usuario" name="usuario" value="admin">
+          </div>
+          <div>
+            <label>Contraseña</label>
+            <input id="password" type="password" name="password">
+          </div>
+        </div>
+        <div class="acciones-sesion" style="margin-top:14px;">
+          <button class="btn btn-green" onclick="conectar()">🔓 Entrar con la clave</button>
+        </div>
+        <div id="info-host"></div>
+      </fieldset>
+    </div>
+
+    <!-- Paso 2: Sesión activa -->
+    <div id="panel-sesion" class="oculto">
+      <div class="banner-ok">
+        <span id="sesion-txt">Conectado</span>
+        <span style="flex:1"></span>
+        <label for="select-equipo" style="margin-right:6px;">Equipo:</label>
+        <select id="select-equipo" onchange="cambiarEquipo()" style="min-width:180px;"></select>
+        <button class="btn btn-red" onclick="desconectar()">Cerrar sesión</button>
+      </div>
+
+      <div id="estado-tarjetas" class="grid-estado"></div>
+
+      <fieldset>
+        <legend>Consultar información</legend>
+        <div class="acciones-sesion">
+          <button class="btn btn-blue" onclick="cargar('interfaces')">Interfaces</button>
+          <button class="btn btn-blue" onclick="cargar('ip')">IPs / ARP / DHCP</button>
+          <button class="btn btn-blue" onclick="cargar('rutas')">Rutas / Firewall</button>
+          <button class="btn btn-blue" onclick="cargar('vlanes')">VLANs / Bridge</button>
+          <button class="btn btn-dark" onclick="cargar('nat')">NAT</button>
+          <button class="btn btn-ospf" onclick="cargar('ospf')">🌐 OSPF</button>
+          <button class="btn btn-dark" onclick="cargar('trafico');moniAbrir('trafico')">📈 Tráfico</button>
+          <button class="btn btn-dark" onclick="cargar('estado')">Estado general</button>
+        </div>
+        <div class="acciones-sesion" style="margin-top:8px;">
+          <button class="btn btn-green" onclick="exportarYAML()">💾 Guardar configuración (YAML)</button>
+          <button class="btn btn-green" onclick="exportarYAMLCompleta()" title="Guarda TODOS los bloques (incluye servidores/redes DHCP y lo que no esté marcado)">🗂 Guardar configuración completa</button>
+          <button class="btn btn-dark" onclick="compararYAMLs()">🔁 Comparar dos configuraciones</button>
+          <button class="btn btn-amber" onclick="restaurarDesdeYAML()" title="Carga un YAML guardado y devuelve el equipo a esa configuración completa">⬆️ Restaurar desde YAML</button>
+          <button class="btn btn-ospf" onclick="levantarPaso(1)" title="Paso 1: toma el YAML de topología (ospf.yml) y levanta OSPF en todos los equipos (loopback, instancia, redes)">🚀 1) Levantar OSPF desde YAML</button>
+          <button class="btn btn-ospf" onclick="levantarPaso(2)" title="Paso 2: en cada equipo mira qué vecino hay en cada interfaz y pone la IP /30 que le corresponde (sin límite de placas ni de routers). Re-ejecutar resincroniza si cambiaste cables o placas">🔌 2) Levantar interfaces (según cables)</button>
+        </div>
+        <div class="opciones-yaml">
+          <span class="opciones-yaml-titulo">Qué guardar:</span>
+          <label class="chk"><input type="checkbox" checked data-sec="equipo">Equipo</label>
+          <label class="chk"><input type="checkbox" checked data-sec="interfaces">Interfaces</label>
+          <label class="chk"><input type="checkbox" checked data-sec="ip">IPs / Máscaras</label>
+          <label class="chk"><input type="checkbox" checked data-sec="rutas">Rutas</label>
+          <label class="chk"><input type="checkbox" checked data-sec="vlanes">VLANs / Bridge</label>
+          <label class="chk"><input type="checkbox" checked data-sec="filtros">Firewall / Filtros</label>
+          <label class="chk"><input type="checkbox" checked data-sec="nat">NAT</label>
+          <label class="chk"><input type="checkbox" checked data-sec="arp">ARP</label>
+          <label class="chk"><input type="checkbox" checked data-sec="dhcp">Leases DHCP</label>
+          <label class="chk"><input type="checkbox" checked data-sec="dhcp_servidores">Servidores DHCP</label>
+          <label class="chk"><input type="checkbox" checked data-sec="dhcp_redes">Redes DHCP</label>
+          <label class="chk"><input type="checkbox" checked data-sec="pools">Pools DHCP</label>
+          <label class="chk"><input type="checkbox" data-sec="dns">DNS</label>
+          <label class="chk"><input type="checkbox" data-sec="usuarios">Usuarios</label>
+          <label class="chk"><input type="checkbox" checked data-sec="gateway">Gateway</label>
+          <button class="btn btn-dark" style="flex:0;min-width:auto;padding:6px 10px;" onclick="marcarTodos()">✓ Todo</button>
+          <button class="btn btn-dark" style="flex:0;min-width:auto;padding:6px 10px;" onclick="desmarcarTodos()">✗ Nada</button>
+        </div>
+      </fieldset>
+
+      <!-- Monitoreo en vivo -->
+      <div id="panel-monitoreo" class="oculto">
+        <fieldset>
+          <legend>Monitoreo en vivo</legend>
+          <div class="moni-barra">
+            <div class="moni-pestanas">
+              <button class="moni-tab activa" data-tab="trafico" onclick="moniTab('trafico')">📈 Tráfico</button>
+              <button class="moni-tab" data-tab="topologia" onclick="moniTab('topologia')">🕸 Topología</button>
+              <button class="moni-tab" data-tab="alarmas" onclick="moniTab('alarmas')">🚨 Alarmas <span class="moni-badge vacio" id="badge-alarmas">0</span></button>
+              <button class="moni-tab" data-tab="metricas" onclick="moniTab('metricas')">📏 Métricas OSPF</button>
+            </div>
+            <div class="moni-refresco">
+              <span>cada</span>
+              <select id="moni-intervalo" onchange="moniIntervalo()">
+                <option value="1">1 s</option>
+                <option value="2" selected>2 s</option>
+                <option value="5">5 s</option>
+                <option value="10">10 s</option>
+              </select>
+              <button class="btn btn-dark" onclick="moniPausa()" id="moni-boton-pausa">⏸ Pausar</button>
+              <button class="btn btn-red" onclick="moniCerrar()" title="Cerrar el monitoreo">✕</button>
+            </div>
+          </div>
+          <div class="moni-estado" id="moni-estado">—</div>
+          <div id="moni-cuerpo"></div>
+        </fieldset>
+      </div>
+      <div class="moni-toasts" id="moni-toasts"></div>
+
+      <div id="resultado"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function setError(texto) {
+  const r = $("resultado");
+  r.innerHTML = `<div class="banner-error">${texto}</div>`;
+}
+
+function btn(label) {
+  return `<button class="btn btn-dark" onclick="cargar('${label}')">${label}</button>`;
+}
+
+async function escanear() {
+  const r = $("resultado-escaner");
+  r.classList.remove("oculto");
+  r.innerHTML = `<div class="cargando">Escaneando las redes locales...</div>`;
+  const resp = await fetch("/api/escanear", { method: "POST" });
+  const data = await resp.json();
+  if (!data.ok) { r.innerHTML = `<div class="banner-error">${data.error}</div>`; return; }
+  if (!data.hosts.length) {
+    r.innerHTML = `<div class="banner-error">No se encontró MikroTik en: ${data.redes.join(", ")}. Verificá que esté encendido y con la API habilitada.</div>`;
+    return;
+  }
+  r.innerHTML = `<div class="banner-info">MikroTik(s) detectados (redes: ${data.redes.join(", ")}) — marcá los que querés conectar:</div>`;
+  let html = `<div class="acciones-sesion" style="margin:6px 0;gap:16px">
+      <label class="chk" style="font-size:12px;cursor:pointer"><input type="checkbox" id="chk-todos-escaner" onchange="marcarTodosHosts(this.checked)"> <b>Seleccionar todos</b> (<span id="n-marcados">0</span>)</label>
+      <button class="btn btn-green" onclick="conectarSeleccionados()">🚀 Conectar los marcados</button>
+    </div>`;
+  html += `<div class="lista-hosts">`;
+  html += data.hosts.map(h =>
+    `<div class="item-host" data-ip="${h}" onclick="seleccionarHost('${h}')">
+       <input type="checkbox" class="chk-host" data-ip="${h}" onclick="event.stopPropagation()" title="Marcar para conectar en lote">
+       <span class="ip">${h}</span>
+       <span class="info">Consultando identidad...</span>
+       <span class="flecha">➜</span>
+     </div>`).join("");
+  html += `</div>`;
+  r.insertAdjacentHTML("beforeend", html);
+  document.querySelectorAll(".chk-host").forEach(c => c.addEventListener("change", actualizarContadorMarcados));
+  actualizarContadorMarcados();
+  data.hosts.forEach(h => identificarHost(h));
+}
+
+function marcarTodosHosts(estado) {
+  document.querySelectorAll(".chk-host").forEach(c => c.checked = estado);
+  actualizarContadorMarcados();
+}
+
+function actualizarContadorMarcados() {
+  const n = document.querySelectorAll(".chk-host:checked").length;
+  const tot = document.querySelectorAll(".chk-host").length;
+  const cont = $("n-marcados");
+  if (cont) cont.textContent = n;
+  const todos = $("chk-todos-escaner");
+  if (todos) todos.checked = n > 0 && n === tot;
+}
+
+async function identificarHost(ip) {
+  const resp = await fetch("/api/identificar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ host: ip }),
+  });
+  const data = await resp.json();
+  if (!data.ok) { return; }
+  const card = document.querySelector(`.item-host[data-ip="${ip}"]`);
+  if (!card) return;
+  const inf = data.info;
+  let txt = inf.identidad ? `<b>${inf.identidad}</b> · RouterOS ${inf.version}` : "Requiere credenciales";
+  if (inf.protegido) txt = "🔒 Requiere credenciales";
+  card.querySelector(".info").innerHTML = txt;
+}
+
+function seleccionarHost(ip) {
+  const cards = document.querySelectorAll(".item-host");
+  cards.forEach(c => c.classList.remove("seleccionado"));
+  const card = [...cards].find(c => c.querySelector(".ip").textContent.trim() === ip);
+  if (card) card.classList.add("seleccionado");
+  $("host").value = ip;
+  $("info-host").innerHTML = `<div class="banner-info">Seleccionaste <b>${ip}</b>. Escribí la contraseña y entrá.</div>`;
+  $("password").focus();
+}
+
+function ubicacionManual() {
+  const cards = document.querySelectorAll(".item-host");
+  cards.forEach(c => c.classList.remove("seleccionado"));
+  $("info-host").innerHTML = "";
+  $("host").focus();
+}
+
+function hostsMarcados() {
+  const cks = [...document.querySelectorAll(".chk-host:checked")].map(c => c.dataset.ip);
+  if (cks.length) return cks;
+  const sel = document.querySelector(".item-host.seleccionado");
+  return sel ? [sel.querySelector(".ip").textContent.trim()] : [];
+}
+
+async function conectarSeleccionados() {
+  const ips = hostsMarcados();
+  if (!ips.length) { setError("Marcá o seleccioná al menos un equipo."); return; }
+  const usr = $("usuario").value.trim() || "admin";
+  const pwd = $("password").value;
+  await conectarMulti(ips.map(host => ({ host, usuario: usr, password: pwd })));
+}
+
+async function conectarMulti(equipos) {
+  const r = $("resultado");
+  const n = equipos && equipos.length ? equipos.length : 0;
+  r.innerHTML = `<div class="cargando">Conectando a ${n} equipos...</div>`;
+  const body = { equipos: equipos || [] };
+  const resp = await fetch("/api/conectar_multi", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (data.ok === false && data.error) { setError(data.error); return; }
+  const fallidos = (data.resultados || []).filter(x => !x.ok);
+  if (!data.conectados || !data.conectados.length) {
+    let msg = `<div class="banner-error">No se pudo conectar ningún equipo. Verificá IPs y credenciales.</div>`;
+    fallidos.slice(0, 8).forEach(f => { msg += `<div class="banner-error">${f.host}: ${f.error}</div>`; });
+    r.innerHTML = msg;
+    return;
+  }
+  let msg = `<div class="banner-${fallidos.length ? "error" : "ok"}">Conectados: ${data.conectados.length} equipo(s).</div>`;
+  fallidos.slice(0, 8).forEach(f => { msg += `<div class="banner-error">${f.host}: ${f.error}</div>`; });
+  r.innerHTML = msg;
+  $("panel-login").classList.add("oculto");
+  $("panel-sesion").classList.remove("oculto");
+  await cargarEquipos(data.conectados[0] || "");
+  const host = equipoActivo();
+  if (host) {
+    const body = new FormData();
+    body.append("categoria", "estado");
+    body.append("host", host);
+    const er = await fetch("/api/datos", { method: "POST", body });
+    const ed = await er.json();
+    if (ed.ok && ed.datos) {
+      $("sesion-txt").textContent = "Conectado a " + host;
+      pintarEstado(ed.datos);
+      $("resultado").innerHTML = estadoHTML(ed.datos);
+    }
+  }
+}
+
+function marcarTodos() {
+  document.querySelectorAll(".chk input[data-sec]").forEach(i => i.checked = true);
+}
+
+function desmarcarTodos() {
+  document.querySelectorAll(".chk input[data-sec]").forEach(i => i.checked = false);
+}
+
+async function conectar() {
+  const equipos = [{
+    host: $("host").value.trim(),
+    usuario: $("usuario").value.trim() || "admin",
+    password: $("password").value,
+  }];
+  await conectarMulti(equipos);
+}
+
+async function cargarEquipos(activoHost) {
+  const resp = await fetch("/api/equipos", { method: "POST" });
+  const data = await resp.json();
+  const sel = $("select-equipo");
+  if (!data.ok || !data.equipos.length) return;
+  sel.innerHTML = data.equipos.map(e =>
+    `<option value="${e.host}">${e.host}${e.identidad ? " · " + e.identidad : ""}</option>`
+  ).join("");
+  let active = activoHost || data.activo || data.equipos[0].host;
+  if (active) {
+    const matches = [...sel.options].filter(o => o.value === active);
+    if (matches.length) sel.value = active;
+  }
+  window.__equipoActivo = sel.value;
+}
+
+function equipoActivo() {
+  const sel = $("select-equipo");
+  return sel && sel.value ? sel.value : (window.__equipoActivo || "");
+}
+
+async function cambiarEquipo() {
+  const sel = $("select-equipo");
+  if (!sel) return;
+  window.__equipoActivo = sel.value;
+  const body = new FormData();
+  body.append("categoria", "estado");
+  body.append("host", sel.value);
+  const resp = await fetch("/api/datos", { method: "POST", body });
+  const data = await resp.json();
+  if (data.ok && data.datos) {
+    $("sesion-txt").textContent = "Conectado a " + sel.value;
+    pintarEstado(data.datos);
+    $("resultado").innerHTML = estadoHTML(data.datos);
+  } else if (data.error) {
+    setError(data.error);
+  }
+}
+
+function pintarEstado(e) {
+  const g = $("estado-tarjetas");
+  g.innerHTML = "";
+  const items = [
+    ["Identidad", e.identidad],
+    ["Versión", e.version],
+    ["Board", e.board],
+    ["Uptime", e.uptime],
+    ["CPU", e.cpu + "%"],
+    ["Mem. libre", e.memoria_libre + "B"],
+    ["Disco libre", e.disco_libre + "B"],
+    ["Fecha", e.fecha],
+  ];
+  items.forEach(([k, v]) => {
+    const d = document.createElement("div");
+    d.className = "tarjeta";
+    d.innerHTML = `<div class="k">${k}</div><div class="v">${v}</div>`;
+    g.appendChild(d);
+  });
+}
+
+function estadoHTML(e) {
+  const filas = [
+    ["Identidad", e.identidad],
+    ["Versión", e.version],
+    ["Board", e.board],
+    ["N° de serie", e.serial],
+    ["Uptime", e.uptime],
+    ["CPU", e.cpu + "%"],
+    ["Memoria total", e.memoria_total + "B"],
+    ["Memoria libre", e.memoria_libre + "B"],
+    ["Disco total", e.disco_total + "B"],
+    ["Disco libre", e.disco_libre + "B"],
+    ["Fecha", e.fecha],
+    ["Hora", e.hora],
+  ];
+  const filasHtml = filas.map(([k, v]) =>
+    `<tr><td style="color:var(--text-muted)">${k}</td><td style="color:var(--neon-cyan);font-weight:600">${v || "—"}</td></tr>`
+  ).join("");
+  return `<h3 style="color:var(--neon-cyan)">Estado general</h3>
+          <table><tbody>${filasHtml}</tbody></table>`;
+}
+
+function traducirClave(k) {
+  const m = {
+    nombre: "Nombre", tipo: "Tipo", running: "Activa", disabled: "Desactivada",
+    descripcion: "Descripción", mtu: "MTU", mac: "MAC",
+    rx: "RX (bytes)", tx: "TX (bytes)",
+    interfaz: "Interfaz", direccion: "Dirección", mascara: "Máscara",
+    prefijo: "Prefijo", red: "Red", dinamica: "Dinámica",
+    destino: "Destino", gateway: "Gateway", distancia: "Distancia",
+    "pref-fuente": "Fuente",
+    cadena: "Cadena", accion: "Acción", protocolo: "Protocolo",
+    origen: "Origen", destino2: "Destino", "puerto-origen": "Pto. origen",
+    "puerto-destino": "Pto. destino", "interfaz-origen": "Int. origen",
+    "interfaz-destino": "Int. destino", comentario: "Comentario",
+    hostname: "Host", servidor: "Servidor", estado: "Estado",
+    "a-direccion": "A (destino)", "a-puerto": "A (puerto)",
+    address: "Dirección", host: "Host"
+  };
+  return m[k] || k;
+}
+
+async function cargar(categoria) {
+  const r = $("resultado");
+  r.innerHTML = `<div class="cargando">Consultando ${categoria}...</div>`;
+  const body = new FormData();
+  body.append("categoria", categoria);
+  const host = equipoActivo();
+  if (host) body.append("host", host);
+  const resp = await fetch("/api/datos", { method: "POST", body });
+  const data = await resp.json();
+  if (!data.ok) { setError(data.error); return; }
+
+  if (categoria === "estado") {
+    pintarEstado(data.datos);
+    r.innerHTML = estadoHTML(data.datos);
+    return;
+  }
+
+  let html = "";
+  if (categoria === "interfaces") {
+    if (!data.datos.length) { r.innerHTML = `<div class="banner-info">${btn('interfaces')} — Sin interfaces</div>`; return; }
+    html = tabla(data.datos, ["nombre", "tipo", "running", "disabled", "descripcion", "mtu", "mac", "rx", "tx"]);
+  } else if (categoria === "ip") {
+    html += `<h3 style="color:var(--neon-cyan)">Direcciones IP</h3>` + tabla(data.datos.direcciones, ["interfaz", "direccion", "mascara", "prefijo", "red", "dinamica"]);
+    html += `<h3 style="color:var(--neon-cyan)">Tabla ARP</h3>` + tabla(data.datos.arp, ["direccion", "mac", "interfaz", "dinamica"]);
+    html += `<h3 style="color:var(--neon-cyan)">Clientes DHCP</h3>` + tabla(data.datos.dhcp, ["hostname", "direccion", "mac", "servidor", "estado"]);
+  } else if (categoria === "rutas") {
+    html += `<h3 style="color:var(--neon-cyan)">Rutas</h3>` + tabla(data.datos.rutas, ["destino", "gateway", "distancia", "dinamica"]);
+    html += `<h3 style="color:var(--neon-cyan)">Firewall (filtros)</h3>` + tabla(data.datos.firewall, ["cadena", "accion", "protocolo", "origen", "destino", "comentario"]);
+  } else if (categoria === "vlanes") {
+    html += `<h3 style="color:var(--neon-cyan)">VLANs</h3>` + tabla(data.datos.vlan, ["name", "vlan-id", "interface", "disabled"]);
+    html += `<h3 style="color:var(--neon-cyan)">Bridges</h3>` + tabla(data.datos.bridge, ["name", "mtu", "running"]);
+    html += `<h3 style="color:var(--neon-cyan)">Bridge VLANs</h3>` + tabla(data.datos.bridge_vlan, ["vlan-ids", "bridge", "tagged", "untagged"]);
+  } else if (categoria === "nat") {
+    html += `<h3 style="color:var(--neon-cyan)">NAT</h3>` + tabla(data.datos, ["cadena", "accion", "protocolo", "origen", "destino", "a-direccion", "comentario"]);
+  } else if (categoria === "ospf") {
+    html += ospfHTML(data.datos);
+  } else if (categoria === "trafico") {
+    html += traficoHTML(data.datos);
+  }
+  r.innerHTML = html;
+}
+
+function tabla(filas, columnas) {
+  if (!filas.length) return `<div class="banner-info">Sin datos.</div>`;
+  const colHeaders = columnas.map(c => `<th>${traducirClave(c)}</th>`).join("");
+  const filasHtml = filas.map(f => {
+    const tds = columnas.map(c => {
+      let v = f[c];
+      if (v === undefined) { // algunas claves con guion
+        v = f[c.replace(/-/g, "-")];
+      }
+      if (typeof v === "number") v = v.toLocaleString("es");
+      if (v === true) v = "true";
+      if (v === false) v = "false";
+      if (v === null || v === undefined) v = "";
+      let cls = "";
+      if (c === "running") { cls = (v === "true" || v === true) ? "arriba" : "abajo"; v = v === "true" || v === true ? "UP" : "DOWN"; }
+      else if (c === "status") { cls = String(v).toLowerCase().includes("bound") || String(v).toLowerCase().includes("running") ? "arriba" : "abajo"; }
+      return `<td class="${cls}">${v}</td>`;
+    }).join("");
+    return `<tr>${tds}</tr>`;
+  }).join("");
+  return `<table><thead><tr>${colHeaders}</tr></thead><tbody>${filasHtml}</tbody></table>`;
+}
+
+function ospfHTML(ospf) {
+  let html = `<h3 style="color:var(--neon-cyan)">OSPF — Instancias</h3>`;
+  html += tabla(ospf.instancias || [], ["nombre", "router-id", "redistribute-connected", "estado", "disabled"]);
+  html += `<h3 style="color:var(--neon-cyan)">Áreas</h3>`;
+  html += tabla(ospf.areas || [], ["nombre", "area-id", "tipo", "vecinos", "adyacentes", "disabled"]);
+  html += `<h3 style="color:var(--neon-cyan)">Vecinos OSPF</h3>`;
+  html += tabla(ospf.vecinos || [], ["router-id", "direccion", "interfaz", "estado", "prioridad", "adyacencia"]);
+  html += `<h3 style="color:var(--neon-cyan)">Redes anunciadas</h3>`;
+  html += tabla(ospf.redes || [], ["red", "area", "disabled"]);
+  html += `<h3 style="color:var(--neon-cyan)">Rutas OSPF aprendidas</h3>`;
+  html += tabla(ospf.rutas || [], ["destino", "gateway", "distancia", "interfaz", "activa"]);
+  return html;
+}
+
+function traficoHTML(interfaces) {
+  const umbral = parseInt($("umbral-trafico") ? $("umbral-trafico").value : 0) || 0;
+  let html = `<h3 style="color:var(--neon-cyan)">Monitoreo de tráfico por interfaz</h3>`;
+  const filas = interfaces.filter(i => i.tipo === "ether" || i.tipo === "vlan" || i.tipo === "bridge");
+  if (!filas.length) return html + `<div class="banner-info">Sin interfaces de datos.</div>`;
+  html += `<div class="acciones-sesion" style="margin:8px 0;">
+    <label>Umbral de alerta (bytes):</label>
+    <input id="umbral-trafico" type="number" min="0" step="1000000" value="${umbral}" style="width:130px;">
+    <button class="btn btn-dark" onclick="cargar('trafico')">Filtrar</button>
+  </div>`;
+  html += `<table><thead><tr>
+    <th>Interfaz</th><th>Running</th><th>RX (bytes)</th><th>TX (bytes)</th><th>Alerta</th>
+  </tr></thead><tbody>`;
+  filas.forEach(f => {
+    const rx = parseInt(f.rx) || 0, tx = parseInt(f.tx) || 0;
+    const sobre = umbral > 0 && (rx > umbral || tx > umbral);
+    html += `<tr>
+      <td>${f.nombre}</td>
+      <td class="${f.running === "true" ? "arriba" : "abajo"}">${f.running === "true" ? "UP" : "DOWN"}</td>
+      <td>${rx.toLocaleString("es")}</td>
+      <td>${tx.toLocaleString("es")}</td>
+      <td class="${sobre ? "arriba" : ""}">${sobre ? "⚠️ SUPERADO" : ""}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>`;
+  return html;
+}
+
+async function levantarPaso(paso) {
+  const r = $("resultado");
+  if (!(window.pywebview && window.pywebview.api)) {
+    setError("Para elegir el YAML de topología necesitás la ventana nativa de la app.");
+    return;
+  }
+  r.innerHTML = `<div class="cargando">Elegí el archivo YAML de topología OSPF (ospf.yml)...</div>`;
+  const res = await window.pywebview.api.abrir_yaml();
+  if (!res || res.cancelado) { r.innerHTML = `<div class="banner-info">Carga cancelada.</div>`; return; }
+  if (!res.ok) { setError(res.error || "No se pudo leer el archivo."); return; }
+  if (!res.yaml || !res.yaml.trim()) { setError("El archivo está vacío."); return; }
+
+  const paso1 = paso !== 2;
+  const endpoint = paso1 ? "/api/ospf_levantar" : "/api/ospf_interfaces";
+  const cargando = paso1
+    ? "Paso 1/2: levantando OSPF en los equipos del YAML (loopback, instancia, redes)..."
+    : "Paso 2/2: detectando cables (vecinos por interfaz) y poniendo las IP /30...";
+  r.innerHTML = `<div class="cargando">${cargando}</div>`;
+  const resp = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yaml: res.yaml }),
+  });
+  const data = await resp.json();
+  if (data.ok === false && data.error) { setError(data.error); return; }
+  const titulo = paso1 ? "configurados con OSPF (paso 1/2)" : "interfaces sincronizadas (paso 2/2)";
+  let html = `<div class="banner-${data.aplicados === data.total ? "ok" : "error"}">
+    ✅ ${data.aplicados} de ${data.total} equipos ${titulo}.</div>`;
+  (data.resultados || []).forEach(rs => {
+    if (rs.ok) {
+      const msgs = (rs.mensajes || []).length ? " · " + rs.mensajes.join(" · ") : "";
+      html += `<div class="banner-info">${rs.host} (router-id ${rs["router-id"]}): OK${msgs}</div>`;
+    } else {
+      html += `<div class="banner-error">${rs.host}: ${rs.error}</div>`;
+    }
+  });
+  r.innerHTML = html;
+  await cargarEquipos();
+}
+
+function levantarOSPF() {
+  return levantarPaso(1);
+}
+
+function levantarInterfaces() {
+  return levantarPaso(2);
+}
+
+async function desconectar() {
+  const host = equipoActivo();
+  const body = new FormData();
+  if (host) body.append("host", host);
+  await fetch("/api/desconectar", { method: "POST", body });
+  const resp = await fetch("/api/equipos", { method: "POST" });
+  const data = await resp.json();
+  if (!data.ok || !data.equipos.length) {
+    $("panel-login").classList.remove("oculto");
+    $("panel-sesion").classList.add("oculto");
+    $("resultado").innerHTML = "";
+    $("estado-tarjetas").innerHTML = "";
+  } else {
+    await cargarEquipos(data.equipos[0].host);
+    $("resultado").innerHTML = `<div class="banner-info">Desconectado ${host || ""}. Quedan conectados: ${data.equipos.map(e => e.host).join(", ")}.</div>`;
+  }
+}
+
+function exportarYAMLCompleta() {
+  exportarYAML(true);
+}
+
+async function exportarYAML(completa) {
+  const r = $("resultado");
+  r.innerHTML = `<div class="cargando">Consultando la configuración seleccionada...</div>`;
+
+  const secciones = [...document.querySelectorAll(".chk input[data-sec]:checked")].map(i => i.dataset.sec);
+  if (!completa && !secciones.length) {
+    setError("No seleccionaste ningún bloque para guardar.");
+    return;
+  }
+  const resp = await fetch("/api/exportar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(completa ? { completa: true } : { secciones }),
+  });
+  const data = await resp.json();
+  if (!data.ok) { setError(data.error); return; }
+
+  // Vista previa: mostrá lo que se va a guardar y pedir confirmación.
+  const etiqueta = completa ? "CONFIGURACIÓN COMPLETA" : data.archivo;
+  r.innerHTML = `<div class="preview-cab">
+      <b>Vista previa — ${etiqueta}</b>
+      <button class="btn btn-green" onclick="guardarYAMLConfirmado()">✔ Guardar</button>
+      <button class="btn btn-dark" onclick="cancelarExport()">✖ Cancelar</button>
+    </div>
+    <pre class="preview-yml"></pre>`;
+  $("resultado").querySelector(".preview-yml").textContent = data.yaml;
+  window.__yamlPendiente = data.yaml;
+  window.__archivoYAML = data.archivo;
+}
+
+function guardarYAMLConfirmado() {
+  const yaml = window.__yamlPendiente;
+  if (!yaml) { cancelarExport(); return; }
+  guardarArchivoYAML(yaml, window.__archivoYAML || "config_mikrotik.yaml");
+}
+
+function cancelarExport() {
+  window.__yamlPendiente = null;
+  $("resultado").innerHTML = `<div class="banner-info">Guardado cancelado.</div>`;
+}
+
+async function restaurarDesdeYAML() {
+  const r = $("resultado");
+  if (!(window.pywebview && window.pywebview.api)) {
+    setError("La restauración desde archivo necesita la ventana nativa de la app.");
+    return;
+  }
+  r.innerHTML = `<div class="cargando">Elegí el archivo YAML guardado...</div>`;
+  const res = await window.pywebview.api.abrir_yaml();
+  if (!res || res.cancelado) { r.innerHTML = `<div class="banner-info">Carga cancelada.</div>`; return; }
+  if (!res.ok) { setError(res.error || "No se pudo leer el archivo."); return; }
+  if (!res.yaml || !res.yaml.trim()) { setError("El archivo está vacío."); return; }
+
+  window.__yamlRestaurar = res.yaml;
+  window.__yamlRestaurarArchivo = res.archivo;
+
+  r.innerHTML = `<div class="cargando">Analizando diferencias contra el equipo actual...</div>`;
+  const resp = await fetch("/api/restaurar_completa", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yaml: res.yaml, "solo_analizar": true }),
+  });
+  const data = await resp.json();
+  if (!data.ok) {
+    setError(data.error || "No se pudo analizar la configuración.");
+    return;
+  }
+  mostrarPreviaRestaurar(data, res.archivo);
+}
+
+function mostrarPreviaRestaurar(data, archivo) {
+  const r = $("resultado");
+  r.innerHTML = `
+    <div class="banner-info">
+      Comparando <b>${archivo}</b> (guardada) contra el equipo actual:
+      al aplicar se <b>agregarán al equipo ${data.eliminado}</b> elementos (secciones que faltan),
+      se <b>eliminarán del equipo ${data.agregado}</b> elementos y se <b>modificarán ${data.cambiado}</b>.
+      Total: ${data.total}.
+    </div>
+    <div class="acciones-sesion" style="margin-top:10px;">
+      <button class="btn btn-amber" onclick="confirmarRestaurarTodo()">✔ Aplicar todo</button>
+      <button class="btn btn-dark" onclick="cancelarExport()">✖ Cancelar</button>
+    </div>
+    <div class="banner-error" style="margin-top:8px">⚠️ Esto modifica el equipo conectado. Guardá tu configuración actual antes de continuar.</div>`;
+}
+
+async function confirmarRestaurarTodo() {
+  const r = $("resultado");
+  const yaml = window.__yamlRestaurar;
+  if (!yaml) { setError("Perdiste el YAML a restaurar. Probá de nuevo."); return; }
+  r.innerHTML = `<div class="cargando">Restaurando la configuración guardada...</div>`;
+  const resp = await fetch("/api/restaurar_completa", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yaml, "solo_analizar": false }),
+  });
+  const data = await resp.json();
+  if (data.ok === false && data.error) {
+    setError(data.error);
+    return;
+  }
+  let html = `<div class="banner-ok">✅ ${data.aplicados} de ${data.total} cambios aplicados.</div>`;
+  const fallos = (data.resultados || []).filter(x => !x.ok);
+  if (fallos.length) {
+    html += `<div class="banner-error">No se pudieron aplicar:<br>${fallos.map(f => `• ${f.ruta}: ${f.error}`).join("<br>")}</div>`;
+  }
+  r.innerHTML = html;
+}
+
+async function guardarArchivoYAML(yaml, nombre) {
+  const r = $("resultado");
+  if (window.pywebview && window.pywebview.api) {
+    const res = await window.pywebview.api.guardar_yaml(yaml, nombre);
+    if (res && res.ok) {
+      r.innerHTML = `<div class="banner-ok">✅ Configuración guardada en:<br><b>${res.ruta}</b></div>`;
+    } else if (res && res.cancelado) {
+      r.innerHTML = `<div class="banner-info">Guardado cancelado.</div>`;
+    } else {
+      setError((res && res.error) || "No se pudo guardar el archivo.");
+    }
+    return;
+  }
+
+  const blob = new Blob([yaml], { type: "text/yaml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  r.innerHTML = `<div class="banner-ok">✅ Configuración descargada como <b>${nombre}</b>.</div>`;
+}
+
+async function compararYAMLs() {
+  const r = $("resultado");
+  r.innerHTML = `<div class="cargando">Elegí los dos archivos YAML (anterior y actual)...</div>`;
+  if (!(window.pywebview && window.pywebview.api)) {
+    setError("La comparación necesita la ventana nativa de la app.");
+    return;
+  }
+  const res = await window.pywebview.api.abrir_yamls();
+  if (!res || res.cancelado) { r.innerHTML = `<div class="banner-info">Comparación cancelada.</div>`; return; }
+  if (!res.ok) { setError(res.error || "No se pudo abrir los archivos."); return; }
+  r.innerHTML = `<div class="cargando">Comparando ${res.archivo_a} vs ${res.archivo_b}...</div>`;
+  window.__yamlCompararA = res.yaml_a;
+  window.__yamlCompararB = res.yaml_b;
+
+  const resp = await fetch("/api/comparar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ yaml_a: res.yaml_a, yaml_b: res.yaml_b, archivo_a: res.archivo_a, archivo_b: res.archivo_b }),
+  });
+  const data = await resp.json();
+  if (!data.ok) { setError(data.error); return; }
+  renderComparacion(data);
+}
+
+function renderComparacion(data) {
+  const r = $("resultado");
+  const c = data.conteo;
+  const badges = `
+    <span class="diff-agrega">+${c.agregado} agregado</span>
+    <span class="diff-elimina">−${c.eliminado} eliminado</span>
+    <span class="diff-cambia">≈${c.cambiado} cambiado</span>`;
+  let html = `<h3 style="color:var(--neon-cyan)">Diferencias</h3>
+    <div class="banner-info">Comparando <b>${data.archivo_a}</b> (anterior) con <b>${data.archivo_b}</b> (actual): ${badges}</div>`;
+
+  if (!data.diferencias.length) {
+    html += `<div class="banner-ok">✅ Sin diferencias: las dos configuraciones son iguales.</div>`;
+    r.innerHTML = html;
+    return;
+  }
+
+  const diffs = data.diferencias;
+  const restaurables = diffs.filter(d => d.restaurable);
+  const nRest = restaurables.length;
+
+  let toolbar = "";
+  if (nRest > 0) {
+    toolbar = `
+      <div class="diff-toolbar">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="chk-todos" onchange="seleccionarTodos(this.checked)"> <span>Seleccionar todos (${nRest})</span>
+        </label>
+        <button class="btn btn-green" id="btn-restaurar-sel" onclick="abrirConfirmarRestaurar()" disabled>
+          Restaurar seleccionados (<span id="n-sel">0</span>)
+        </button>
+      </div>`;
+  }
+
+  html += toolbar;
+  html += `<div class="diff-lista">`;
+  diffs.forEach(d => {
+    let cls = "diff-cambia";
+    let ico = "≈";
+    let txt = `${d.ruta}: <b>${d.antes || "—"}</b> → <b>${d.ahora || "—"}</b>`;
+    if (d.tipo === "agregado") { cls = "diff-agrega"; ico = "+"; txt = `+ ${d.ruta}: <b>${d.ahora || "—"}</b>`; }
+    else if (d.tipo === "eliminado") { cls = "diff-elimina"; ico = "−"; txt = `− ${d.ruta}: <b>${d.antes || "—"}</b> (se vuelve a crear)`; }
+    const rutaEsc = d.ruta.replace(/'/g, "\\'");
+    const chk = d.restaurable
+      ? `<input type="checkbox" class="chk-diff" data-ruta='${rutaEsc}' onchange="actualizarSeleccion()"> `
+      : "";
+    html += `<div class="diff-fila ${cls}"><span class="diff-ico">${ico}</span> ${chk}<span class="diff-txt">${txt}</span></div>`;
+  });
+  html += `</div>`;
+  html += `
+    <div class="banner-info" style="margin-top:12px">
+      Podés restaurar <b>${nRest} de ${diffs.length}</b> cambios: los valores se aplican
+      sobre el equipo conectado volviendo a la configuración anterior (A).
+    </div>`;
+  r.innerHTML = html;
+}
+
+function seleccionarTodos(estado) {
+  document.querySelectorAll(".chk-diff").forEach(c => c.checked = estado);
+  actualizarSeleccion();
+}
+
+function actualizarSeleccion() {
+  const n = document.querySelectorAll(".chk-diff:checked").length;
+  const btn = $("btn-restaurar-sel");
+  if (btn) {
+    btn.disabled = n === 0;
+    $("n-sel").textContent = n;
+  }
+}
+
+function abrirConfirmarRestaurar() {
+  const rutas = Array.from(document.querySelectorAll(".chk-diff:checked")).map(c => c.dataset.ruta);
+  if (!rutas.length) { setError("No seleccionaste ningún cambio para restaurar."); return; }
+  const modal = $("modal-restaurar");
+  modal.classList.remove("oculto");
+  $("modal-restaurar-rutas").value = JSON.stringify(rutas);
+  window.__rutasRestaurar = rutas;
+  const lista = rutas.slice(0, 8).map(r => `• ${r}`).join("<br>") + (rutas.length > 8 ? `<br>... y ${rutas.length - 8} más` : "");
+  $("modal-restaurar-rutas").innerHTML = lista;
+}
+
+async function confirmarRestaurar() {
+  const rutas = window.__rutasRestaurar || [];
+  const yaml_a = window.__yamlCompararA || "";
+  const yaml_b = window.__yamlCompararB || "";
+  if (!rutas.length || !yaml_a || !yaml_b) { cerrarModalRestaurar(); setError("Faltan las rutas o los YAML."); return; }
+  const btn = $("btn-confirmar-restaurar");
+  btn.disabled = true;
+  btn.textContent = "Restaurando...";
+  const resp = await fetch("/api/restaurar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rutas, yaml_a, yaml_b }),
+  });
+  const data = await resp.json();
+  btn.disabled = false;
+  btn.textContent = "Sí, restaurar";
+  cerrarModalRestaurar();
+  if (data.ok === false && data.error) {
+    setError(data.error);
+    return;
+  }
+  let html = `<div class="banner-ok">✅ ${data.aplicados} de ${data.total} cambios restaurados.</div>`;
+  const fallos = (data.resultados || []).filter(r => !r.ok);
+  if (fallos.length) {
+    html += `<div class="banner-error">Los siguientes no se pudieron aplicar:<br>${fallos.map(f => `• ${f.ruta}: ${f.error}`).join("<br>")}</div>`;
+  }
+  $("resultado").innerHTML = html;
+}
+
+function cerrarModalRestaurar() {
+  $("modal-restaurar").classList.add("oculto");
+}
+
+/* ============ Monitoreo en vivo ============ */
+const MONI = {
+  abierto: false, tab: "trafico", pausado: false, intervalo: 2,
+  seq: 0, timer: null, enCurso: false,
+  equipos: [], alarmas: [], topo: { nodos: [], enlaces: [] },
+  eventos: [], cfg: { alarmas: [], capacidades: {}, "capacidad-default": 100000000 },
+  metricas: null, selEnlace: null, editAlarma: null, filtroNodo: "",
+  sonido: true, notifPedida: false, audio: null,
+  slots: null, hist: {},
+};
+
+function moniEsc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function moniJsStr(s) {
+  return String(s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/[\r\n]+/g, " ");
+}
+
+function moniPost(url, payload) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  }).then(r => r.json()).catch(() => ({ ok: false, error: "sin respuesta del servidor" }));
+}
+
+function moniBps(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + " Gbps";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + " Mbps";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + " kbps";
+  return n.toFixed(0) + " bps";
+}
+
+function moniPctBar(p, ancho) {
+  p = Math.min(100, Math.max(0, Number(p) || 0));
+  const cl = p >= 70 ? " rojo" : (p >= 40 ? " ambar" : "");
+  return `<div class="barra${cl}" style="width:${ancho || 120}px"><i style="width:${p}%"></i><span class="txt">${p.toFixed(1)}%</span></div>`;
+}
+
+function moniTab(tab) {
+  MONI.tab = tab;
+  document.querySelectorAll(".moni-tab").forEach(b => b.classList.toggle("activa", b.dataset.tab === tab));
+  moniRender(true);
+}
+
+function moniAbrir(tab) {
+  const p = $("panel-monitoreo");
+  if (p) p.classList.remove("oculto");
+  MONI.abierto = true;
+  try { const v = localStorage.getItem("moni-intervalo"); if (v) MONI.intervalo = parseInt(v, 10) || 2; } catch (e) {}
+  if (tab) moniTab(tab);
+  if (!MONI.notifPedida && "Notification" in window) {
+    MONI.notifPedida = true;
+    try { Notification.requestPermission(); } catch (e) {}
+  }
+  moniCargarCfg();
+  if (!MONI.timer) MONI.timer = setTimeout(moniTiquear, 250);
+}
+
+function moniCerrar() {
+  MONI.abierto = false;
+  const p = $("panel-monitoreo");
+  if (p) p.classList.add("oculto");
+  if (MONI.timer) { clearTimeout(MONI.timer); MONI.timer = null; }
+}
+
+function moniPausa() {
+  MONI.pausado = !MONI.pausado;
+  const b = $("moni-boton-pausa");
+  if (b) b.textContent = MONI.pausado ? "▶ Reanudar" : "⏸ Pausar";
+  moniEstado(MONI.pausado ? "monitoreo pausado" : "monitoreo reanudado");
+}
+
+function moniIntervalo() {
+  MONI.intervalo = parseInt($("moni-intervalo").value, 10) || 2;
+  try { localStorage.setItem("moni-intervalo", String(MONI.intervalo)); } catch (e) {}
+}
+
+function moniEstado(txt) {
+  const e = $("moni-estado");
+  if (e && txt) e.textContent = txt;
+}
+
+async function moniTiquear() {
+  if (!MONI.abierto) return;
+  if (!MONI.pausado && !MONI.enCurso) {
+    MONI.enCurso = true;
+    try {
+      const data = await moniPost("/api/monitoreo", { desde: MONI.seq });
+      if (data && data.ok !== false) {
+        moniProcesar(data);
+        moniEstado(data.sin_sesion
+          ? "no hay sesiones activas — conectá un MikroTik para monitorear"
+          : "última lectura: " + new Date().toLocaleTimeString());
+      } else {
+        moniEstado("error: " + moniEsc((data && data.error) || "respuesta inválida"));
+      }
+    } catch (e) {
+      moniEstado("error de conexión con el servidor");
+    } finally {
+      MONI.enCurso = false;
+    }
+    if (MONI.tab === "metricas" && MONI.abierto && !MONI.pausado) {
+      const m = await moniPost("/api/metricas", {});
+      if (m && m.ok) { MONI.metricas = m; moniRender(); }
+    }
+  }
+  if (MONI.abierto) MONI.timer = setTimeout(moniTiquear, MONI.intervalo * 1000);
+}
+
+function moniProcesar(data) {
+  MONI.seq = data.seq || MONI.seq;
+  MONI.equipos = data.equipos || [];
+  MONI.alarmas = data.alarmas || [];
+  if (data.topologia) MONI.topo = data.topologia;
+  for (const ev of data.eventos || []) {
+    if (MONI.eventos.some(e => e.seq === ev.seq)) continue;
+    MONI.eventos.push(ev);
+    if (ev.tipo === "activada") moniAlarmaNueva(ev);
+  }
+  if (MONI.eventos.length > 300) MONI.eventos = MONI.eventos.slice(-300);
+  moniRender();
+}
+
+function moniRender(force) {
+  const cuerpo = $("moni-cuerpo");
+  if (!cuerpo) return;
+  const foco = document.activeElement;
+  const editando = foco && foco.tagName && /INPUT|SELECT|TEXTAREA|BUTTON/.test(foco.tagName) && cuerpo.contains(foco);
+  if (editando && !force) { moniBadges(); return; }
+  try {
+    if (MONI.tab === "trafico") cuerpo.innerHTML = moniTraficoHTML();
+    else if (MONI.tab === "topologia") cuerpo.innerHTML = moniTopologiaHTML();
+    else if (MONI.tab === "alarmas") cuerpo.innerHTML = moniAlarmasHTML();
+    else cuerpo.innerHTML = moniMetricasHTML();
+  } catch (e) {
+    cuerpo.innerHTML = `<div class="banner-error">Error al dibujar: ${moniEsc(e.message)}</div>`;
+  }
+  moniBadges();
+}
+
+function moniBadges() {
+  const activos = (MONI.alarmas || []).filter(a => a.estado === "activa").length;
+  const b = $("badge-alarmas");
+  if (b) { b.textContent = activos; b.classList.toggle("vacio", activos === 0); }
+}
+
+function moniCargarCfg() {
+  moniPost("/api/alarmas", { accion: "listar" }).then(d => { if (d && d.ok) MONI.cfg = d.config || MONI.cfg; });
+  moniPost("/api/capacidades", {}).then(d => { if (d && d.ok) MONI.cfg = d.config || MONI.cfg; });
+}
+
+/* ---------- Tab Tráfico ---------- */
+function moniTraficoHTML() {
+  let equipos = MONI.equipos || [];
+  if (!equipos.length) return `<div class="banner-info">Sin datos todavía — esperá la primera medición del nodo de monitoreo…</div>`;
+  if (MONI.filtroNodo) {
+    equipos = equipos.filter(e => e.identidad === MONI.filtroNodo || e.host === MONI.filtroNodo);
+  }
+  let bps = 0, rx = 0, tx = 0, down = 0;
+  for (const e of MONI.equipos) for (const i of e.interfaces || []) {
+    bps += Number(i["total-bps"]) || 0; rx += Number(i["rx-bps"]) || 0; tx += Number(i["tx-bps"]) || 0;
+    if (String(i.running) !== "true" && String(i.tipo || "").startsWith("ether")) down++;
+  }
+  const activos = (MONI.alarmas || []).filter(a => a.estado === "activa").length;
+  let html = `<div class="moni-resumen">
+    <div class="tarjeta"><div class="k">Tráfico total</div><div class="v">${moniBps(bps)}</div></div>
+    <div class="tarjeta"><div class="k">RX total</div><div class="v" style="color:#34d399">${moniBps(rx)}</div></div>
+    <div class="tarjeta"><div class="k">TX total</div><div class="v" style="color:#fbbf24">${moniBps(tx)}</div></div>
+    <div class="tarjeta"><div class="k">Alarmas activas</div><div class="v" style="color:${activos ? "#f87171" : "#34d399"}">${activos}</div></div>
+    <div class="tarjeta"><div class="k">Enlaces caídos</div><div class="v" style="color:${down ? "#f87171" : "#34d399"}">${down}</div></div>
+  </div>`;
+  const listaSel = [{ ip: "", nom: "Todos los equipos" }].concat((MONI.equipos || []).map(e => ({ ip: e.host, nom: (e.identidad || e.host) + " · " + e.host })));
+  const cur = listaSel.find(o => String(MONI.filtroNodo || "") === String(o.ip));
+  const curNom = cur ? cur.nom : ((MONI.equipos || []).find(e => e.identidad === MONI.filtroNodo) ? (MONI.equipos.find(e => e.identidad === MONI.filtroNodo).identidad + " · " + MONI.filtroNodo) : MONI.filtroNodo);
+  html += `<div style="margin:2px 0 6px"><span style="color:var(--text-muted);font-size:12px;margin-right:8px">Equipo:</span>
+    <div class="moni-select" id="moni-sel-equipo">
+      <button type="button" class="moni-select-btn" onclick="moniSelDrop(event)" title="Elegí qué equipo ver en el tráfico">${moniEsc(curNom || "Todos los equipos")} <b>▾</b></button>
+      <div class="moni-select-lista oculto">
+        ${listaSel.map(o => `<button type="button" class="moni-select-item${String(MONI.filtroNodo || "") === String(o.ip) ? " activa" : ""}" data-ip="${moniEsc(o.ip)}" onclick="moniElegirEquipo(this.dataset.ip)">${moniEsc(o.nom)}</button>`).join("")}
+      </div>
+    </div>
+  </div>`;
+  if (MONI.filtroNodo) {
+    html += `<div style="margin-bottom:6px"><span class="etq arn">filtro: ${moniEsc(MONI.filtroNodo)}</span> <button class="btn btn-dark" style="min-width:auto;padding:3px 8px;font-size:11px" onclick="moniElegirEquipo('')">✕ quitar</button></div>`;
+  }
+  for (const e of equipos) {
+    const filas = (e.interfaces || []).slice().sort((a, b) => (b["total-bps"] || 0) - (a["total-bps"] || 0));
+    if (!filas.length) continue;
+    html += `<div class="moni-sub">${moniEsc(e.identidad || e.host)} <span style="color:var(--text-muted);font-weight:400;text-transform:none">(${moniEsc(e.host)})</span></div>`;
+    html += `<table><thead><tr><th>Interfaz</th><th>Dirección</th><th>RX</th><th>TX</th><th>Uso</th><th>Estado</th></tr></thead><tbody>`;
+    for (const i of filas) {
+      const downI = String(i.running) !== "true" && String(i.tipo || "").startsWith("ether");
+      const pct = Math.min(100, Number(i.pct) || 0);
+      const alarm = i.alarma;
+      let estado = "";
+      if (alarm) estado += `<span class="etq ${moniEsc(alarm)}">${moniEsc(alarm)}</span> `;
+      if (downI) estado += `<span class="etq down">DOWN${Number(i["link-downs"] || 0) > 0 ? " (" + i["link-downs"] + ")" : ""}</span>`;
+      if (!estado) estado += `<span class="etq ok">UP</span>`;
+      html += `<tr>
+        <td><b>${moniEsc(i.nombre)}</b></td>
+        <td style="font-family:Consolas,monospace;font-size:11px">${moniEsc(i.direccion || "")}</td>
+        <td style="color:#34d399">${moniBps(i["rx-bps"])}</td>
+        <td style="color:#fbbf24">${moniBps(i["tx-bps"])}</td>
+        <td>${moniPctBar(pct)} · cap ${moniBps(i["capacidad"])}</td>
+        <td>${estado}</td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+  }
+  return html;
+}
+
+/* ---------- Tab Topología ---------- */
+function moniLayout() {
+  const nodos = MONI.topo.nodos || [];
+  const W = 1000, H = 580, cx = W / 2, cy = H / 2;
+  const S = MONI.slots || (MONI.slots = { int: {}, ext: {}, nInt: 0, nExt: 0 });
+  const internos = nodos.filter(n => !n.externo), externos = nodos.filter(n => n.externo);
+  for (const n of internos) if (!(n.id in S.int)) S.int[n.id] = S.nInt++;
+  for (const n of externos) if (!(n.id in S.ext)) S.ext[n.id] = S.nExt++;
+  const nI = Math.max(1, S.nInt), nE = Math.max(1, S.nExt);
+  // Radio para que los routers adyacentes queden bien separados entre sí.
+  const chor = 150;                       // separación objetivo entre nodos (px)
+  const rIdeal = nI > 2 ? chor / (2 * Math.sin(Math.PI / nI)) : 120;
+  const rMax = Math.min(380, Math.min(W, H) / 2 - 88);
+  const r = Math.min(rMax, Math.max(150, rIdeal));
+  const rE = r + 75;
+  const pos = {};
+  for (const n of internos) {
+    const a = -Math.PI / 2 + (S.int[n.id] * 2 * Math.PI) / nI;
+    pos[n.id] = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  }
+  for (const n of externos) {
+    const a = -Math.PI / 2 + Math.PI / nE + (S.ext[n.id] * 2 * Math.PI) / nE;
+    pos[n.id] = { x: cx + rE * Math.cos(a), y: cy + rE * Math.sin(a) };
+  }
+  return { pos, W, H };
+}
+
+function moniNodeAlarma(host) {
+  let sev = "";
+  const ord = { info: 1, alerta: 2, critico: 3 };
+  for (const a of MONI.alarmas || []) {
+    if (a.estado === "activa" && a.host === host && ord[a.severidad] > (ord[sev] || 0)) sev = a.severidad;
+  }
+  return sev;
+}
+
+function moniSelEnlace(idx) {
+  MONI.selEnlace = MONI.selEnlace === idx ? null : idx;
+  moniRender(true);
+}
+
+function moniSelNodo(ident) {
+  MONI.filtroNodo = ident;
+  MONI.tab = "trafico";
+  document.querySelectorAll(".moni-tab").forEach(b => b.classList.toggle("activa", b.dataset.tab === "trafico"));
+  moniRender(true);
+  moniEstado("mostrando interfaces de " + ident);
+}
+
+function moniSelDrop(ev) {
+  ev.stopPropagation();
+  const cont = document.getElementById("moni-sel-equipo");
+  const lista = cont && cont.querySelector(".moni-select-lista");
+  if (!lista) return;
+  const oculto = lista.classList.contains("oculto");
+  lista.classList.toggle("oculto", !oculto);
+}
+
+function moniSelCerrar() {
+  const lista = document.querySelector(".moni-select-lista");
+  if (lista) lista.classList.add("oculto");
+}
+
+function moniElegirEquipo(ip) {
+  MONI.filtroNodo = ip || "";
+  moniSelCerrar();
+  moniRender(true);
+}
+
+document.addEventListener("click", (ev) => {
+  const sel = document.querySelector(".moni-select");
+  if (sel && !sel.contains(ev.target)) moniSelCerrar();
+});
+
+function moniTopologiaHTML() {
+  const nodos = MONI.topo.nodos || [];
+  const enlaces = MONI.topo.enlaces || [];
+  if (!nodos.length) return `<div class="banner-info">Todavía no hay topología detectada (esperá la primera lectura de OSPF).</div>`;
+  const { pos, W, H } = moniLayout();
+  const colEstado = { full: "#10b981", degradado: "#f59e0b", "sin-ospf": "#64748b", caido: "#ef4444", "un-lado": "#64748b" };
+  const COL_SAT = "#f59e0b", COL_REENVIO = "#a855f7", LINGER = 10000;
+  const umbral = Number(MONI.cfg["saturado-pct"]) || 80;
+  const ahora = Date.now();
+  const hist = MONI.hist || (MONI.hist = {});
+  const histNodo = MONI.histNodo || (MONI.histNodo = {});
+
+  // Estado "efectivo" por enlace: mantiene el color del evento hasta 10 s
+  // después de normalizarse, para que se vea la vuelta a la normalidad.
+  const est = enlaces.map((e, idx) => {
+    const id = e.id || (e.a ? e.a.equipo + ":" + e.a.interfaz : "e" + idx);
+    const grave = e.estado !== "full" || e.saturado || e.reenvio;
+    let cur = { estado: e.estado, saturado: !!e.saturado, reenvio: !!e.reenvio };
+    let linger = false;
+    if (grave) {
+      hist[id] = Object.assign({ ts: ahora }, cur);
+    } else if (hist[id] && ahora - hist[id].ts < LINGER) {
+      cur = { estado: hist[id].estado, saturado: hist[id].saturado, reenvio: hist[id].reenvio };
+      linger = true;
+    } else if (hist[id]) {
+      delete hist[id];
+    }
+    let color = colEstado[cur.estado] || "#64748b";
+    if (cur.reenvio) color = COL_REENVIO;
+    else if (cur.saturado) color = COL_SAT;
+    const op = linger ? (0.3 + 0.65 * (1 - (ahora - hist[id].ts) / LINGER)) : 0.95;
+    return { cur, linger, color, op, id };
+  });
+
+  let lin = "", flujo = "", etiq = "", nod = "";
+  enlaces.forEach((e, idx) => {
+    const la = e.a, lb = e.b || null;
+    const na = la && la.nodo;
+    const nb = (lb && lb.nodo) || (la && la["nodo-externo"]);
+    if (!na || !pos[na] || !nb || !pos[nb]) return;
+    const pa = pos[na], pb = pos[nb];
+    const st = est[idx];
+    const pct = Math.min(100, Number(e.pct) || 0);
+    const ancho = Math.max(1.5, Math.min(7, 1.5 + pct / 20)) + (st.cur.reenvio ? 1.5 : 0);
+    const dash = (!st.cur.reenvio && st.cur.estado !== "full") ? ` stroke-dasharray="7,5"` : "";
+    lin += `<line class="linea${st.cur.reenvio ? " reenvio" : ""}" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke="${st.color}" stroke-width="${ancho}"${dash} opacity="${st.op.toFixed(2)}"/>`;
+    lin += `<line class="linea-hit" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke-width="16" onclick="moniSelEnlace(${idx})" cursor="pointer"/>`;
+    const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+    const total = Math.max(Number(la && la["total-bps"]) || 0, Number(lb && lb["total-bps"]) || 0);
+    etiq += `<text class="enlace-etiqueta" x="${mx}" y="${my - 6}">${moniEsc(e.red)} · ${moniBps(total)}</text>`;
+    let marca = "";
+    if (st.cur.reenvio) marca = "ruta de reenvío";
+    else if (st.cur.saturado) marca = "saturado " + pct.toFixed(0) + "%";
+    else if (st.cur.estado !== "full") marca = st.cur.estado;
+    if (marca) etiq += `<text x="${mx}" y="${my + 9}" text-anchor="middle" font-size="10" font-weight="700" fill="${st.color}">${moniEsc(marca)}${st.linger ? " → normal" : ""}</text>`;
+    if (total > 0) {
+      const n = pct >= 40 ? 3 : (pct >= 10 ? 2 : 1);
+      const dur = Math.max(0.8, 4 - 3 * pct / 100);
+      const ta = Number(la && la["total-bps"]) || 0, tb = Number(lb && lb["total-bps"]) || 0;
+      const directo = ta >= tb;
+      const pth = "M" + (directo ? pa.x : pb.x) + "," + (directo ? pa.y : pb.y) + "L" + (directo ? pb.x : pa.x) + "," + (directo ? pb.y : pa.y);
+      for (let k = 0; k < n; k++) {
+        const off = k / n;
+        flujo += `<circle r="3" fill="#7dd3fc" opacity="0.9"><animateMotion dur="${dur}s" begin="${(off * dur).toFixed(2)}s" repeatCount="indefinite" path="${pth}"/></circle>`;
+      }
+    }
+  });
+
+  for (const n of nodos) {
+    if (!pos[n.id]) continue;
+    const p = pos[n.id];
+    const al = moniNodeAlarma(n.host);
+    // Color del router: celeste = ok, rojo = saturado (alarma crítica),
+    // naranja = con alerta o descongestionándose tras recuperarse, gris =
+    // externo o sin conexión.
+    let color, descong = false;
+    if (n.externo || n.mem) {
+      color = "#64748b";
+    } else if (al) {
+      color = (al === "critico") ? "#ef4444" : "#f59e0b";
+    } else if (histNodo[n.id] && ahora - histNodo[n.id] < LINGER) {
+      color = "#f59e0b";
+      descong = true;
+    } else {
+      color = "#38bdf8";
+    }
+    if (al) histNodo[n.id] = ahora;
+    else if (histNodo[n.id] && ahora - histNodo[n.id] >= LINGER) delete histNodo[n.id];
+    const sub = n.externo ? "externo" : (n["router-id"] || n.host || "");
+    nod += `<circle class="nodo-circulo${n.mem ? " mem" : ""}" cx="${p.x}" cy="${p.y}" r="${n.externo ? 13 : 21}" fill="#0b1120" stroke="${color}" stroke-width="2.5" onclick="moniSelNodo('${moniEsc(n.id)}')"/>`;
+    nod += `<text class="nodo-etiqueta" x="${p.x}" y="${p.y - 1}">${moniEsc(n.id)}</text>`;
+    nod += `<text class="nodo-sub" x="${p.x}" y="${p.y + 12}">${moniEsc(sub)}</text>`;
+    if (n.mem) nod += `<text x="${p.x}" y="${p.y + 26}" text-anchor="middle" font-size="9" fill="#64748b">sin conexión</text>`;
+    if (descong) nod += `<text x="${p.x}" y="${p.y + 26}" text-anchor="middle" font-size="9" fill="#f59e0b">descongestionándose</text>`;
+    if (al) nod += `<text x="${p.x + (n.externo ? 13 : 21)}" y="${p.y - 10}" font-size="13" font-weight="800" fill="${color}">⚠</text>`;
+  }
+
+  let detalle = "";
+  if (MONI.selEnlace !== null && enlaces[MONI.selEnlace]) detalle = moniEnlaceDetalle(enlaces[MONI.selEnlace]);
+
+  const leyenda = `<div class="moni-leyenda">
+    <span><i class="sw" style="background:#10b981"></i>enlace normal</span>
+    <span><i class="sw" style="background:${COL_SAT}"></i>enlace saturado (≥ ${umbral}%)</span>
+    <span><i class="sw" style="background:#ef4444"></i>enlace caído</span>
+    <span><i class="sw" style="background:${COL_REENVIO}"></i>ruta de reenvío</span>
+    <span style="width:100%"></span>
+    <span><i class="pt" style="border-color:#38bdf8"></i>router OK</span>
+    <span><i class="pt" style="border-color:#ef4444"></i>router saturado</span>
+    <span><i class="pt" style="border-color:#f59e0b"></i>router descongestionándose</span>
+    <span><i class="pt" style="border-color:#64748b"></i>router sin conexión / externo</span>
+  </div>`;
+
+  return `<div style="margin-bottom:6px">
+    <span style="color:var(--text-muted);font-size:12px">${nodos.length} nodos · ${enlaces.length} enlaces · hacé clic en un enlace para ajustar el costo OSPF · los puntos muestran el flujo dominante</span>
+  </div>
+  ${leyenda}
+  <svg class="grafo" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    ${lin}${flujo}${etiq}${nod}
+  </svg>
+  ${detalle}`;
+}
+
+function moniEnlaceDetalle(e) {
+  const la = e.a, lb = e.b;
+  const lado = (l, nom) => {
+    if (!l) return `<div style="flex:1;min-width:220px;padding:8px;border:1px solid var(--panel-border);border-radius:6px"><span class="etq down">sin otro extremo conocido</span></div>`;
+    const idd = (l.equipo + l.interfaz).replace(/[^a-zA-Z0-9]/g, "_");
+    return `<div style="flex:1;min-width:220px;padding:8px;border:1px solid var(--panel-border);border-radius:6px">
+      <div style="font-weight:700;color:var(--neon-cyan)">${moniEsc(l.nodo || l.equipo)} — ${moniEsc(l.interfaz)}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin:4px 0">${moniEsc(l.direccion || "sin IP")} · RX ${moniBps(l["rx-bps"])} · TX ${moniBps(l["tx-bps"])} · ${Number(l.pct).toFixed(1)}%</div>
+      <div style="font-size:12px">OSPF: <b>${moniEsc(l.ospf || "—")}</b> · costo ahora: <b>${l.costo ?? "dinámico"}</b></div>
+      <div style="margin-top:6px">
+        <input class="moni-costo" type="number" min="1" max="65535" id="tl-${idd}" placeholder="costo">
+        <button class="btn btn-ospf" onclick="moniCostoTopo('${l.equipo}','${l.interfaz}','${nom}',true)">Enlace</button>
+        <button class="btn btn-dark" onclick="moniCostoTopo('${l.equipo}','${l.interfaz}','${nom}',false)">Solo</button>
+        <button class="btn btn-red" onclick="moniCostoRestaurar('${l.equipo}','${l.interfaz}')">⟲ dinámico</button>
+      </div>
+    </div>`;
+  };
+  return `<div class="moni-detalle">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
+      ${lado(la, "a")}${lado(lb, "b")}
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:6px">Red <b>${moniEsc(e.red)}</b> · estado <b>${moniEsc(e.estado)}</b>. «Enlace» aplica el mismo costo a los dos extremos.</div>
+  </div>`;
+}
+
+async function moniCostoTopo(host, iface, lado, enlace) {
+  const inp = document.getElementById("tl-" + (host + iface).replace(/[^a-zA-Z0-9]/g, "_"));
+  const costo = parseInt((inp && inp.value) || "", 10);
+  if (!costo || costo < 1 || costo > 65535) { moniToast({ titulo: "Costo inválido", texto: "Entre 1 y 65535", sev: "info" }); return; }
+  const d = await moniPost("/api/metricas", { accion: "cambiar", host, interfaz: iface, costo, enlace });
+  if (d && d.ok) moniRefrescarMetricas((d.mensajes || []).join(" · "));
+  else moniToast({ titulo: "No se pudo cambiar el costo", texto: (d && d.error) || "", sev: "info" });
+}
+
+async function moniCostoRestaurar(host, iface) {
+  const d = await moniPost("/api/metricas", { accion: "cambiar", host, interfaz: iface, costo: null, enlace: true });
+  if (d && d.ok) moniRefrescarMetricas((d.mensajes || []).join(" · "));
+  else moniToast({ titulo: "No se pudo restaurar", texto: (d && d.error) || "", sev: "info" });
+}
+
+/* ---------- Tab Alarmas ---------- */
+function moniEstadoAlarma(a) {
+  if (a.estado === "activa") return '<span class="etq critico">&#9650; ACTIVA</span>';
+  if (a.estado === "sin-datos") return '<span class="etq arn">sin datos</span>';
+  return '<span class="etq ok">ok</span>';
+}
+
+function moniAccionAlarma(al) {
+  if (al.accion === "automatica") {
+    return "auto &#8594; <b>" + moniEsc(al.costo ?? "?") + "</b> (normal " + moniEsc(al["costo-normal"] ?? "dinámico") + ")";
+  }
+  return moniEsc(al.accion || "ninguna");
+}
+
+function moniAlarmasHTML() {
+  const reglas = MONI.cfg.alarmas || [];
+  const todas = MONI.alarmas || [];
+  let html = `<div class="moni-sub">Nueva regla</div>`;
+  html += moniFormAlarmaHTML();
+
+  html += `<div class="moni-sub">Monitoreo por interfaz (reglas evaluadas en el último ciclo)</div>`;
+  if (!todas.length) html += `<div class="banner-info">No hay reglas activas/configuradas.</div>`;
+  else {
+    html += `<table><thead><tr><th>Regla</th><th>Equipo</th><th>Interfaz</th><th>Condición</th><th>Valor</th><th>Estado</th></tr></thead><tbody>`;
+    for (const a of todas) {
+      html += `<tr>
+        <td><b>${moniEsc(a.nombre || a.id)}</b> <span class="etq ${moniEsc(a.severidad)}">${moniEsc(a.severidad)}</span></td>
+        <td>${moniEsc(a.identidad || a.host || "—")}</td>
+        <td>${moniEsc(a.interfaz)}</td>
+        <td>${moniEsc(a.metrica)} ${moniEsc(a.operador)} ${moniEsc(a.umbral)}</td>
+        <td>${a.valor === null || a.valor === undefined ? "—" : (a.metrica === "pct" ? Number(a.valor).toFixed(1) + "%" : moniBps(a.valor))}</td>
+        <td>${moniEstadoAlarma(a)}</td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+  }
+
+  html += `<div class="moni-sub">Reglas configuradas (${reglas.length})</div>`;
+  if (!reglas.length) html += `<div class="banner-info">Todavía no hay reglas de alarma.</div>`;
+  else {
+    html += `<table><thead><tr><th>Nombre</th><th>Alcance</th><th>Condición</th><th>Severidad</th><th>Acción</th><th style="width:110px"></th></tr></thead><tbody>`;
+    for (const al of reglas) {
+      html += `<tr>
+        <td>${moniEsc(al.nombre || al.id)}${al.habilitada === false ? ' <span class="etq arn">desactivada</span>' : ""}</td>
+        <td>${moniEsc(al.equipo || "todos")} · ${moniEsc(al.interfaz || "*")}</td>
+        <td>${moniEsc(al.metrica)} ${moniEsc(al.operador)} ${moniEsc(al.umbral)} · dur ${Number(al["duracion-s"] || 0)}s</td>
+        <td><span class="etq ${moniEsc(al.severidad)}">${moniEsc(al.severidad)}</span></td>
+        <td>${moniAccionAlarma(al)}</td>
+        <td>
+          <button class="btn btn-dark" onclick="moniEditarAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Editar">✏️</button>
+          <button class="btn btn-amber" onclick="moniToggleAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Habilitar / deshabilitar">${al.habilitada === false ? "▶" : "⏸"}</button>
+          <button class="btn btn-red" onclick="moniBorrarAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Borrar">🗑</button>
+        </td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+  }
+
+  html += `<div class="moni-sub">Eventos recientes <button class="btn btn-dark" style="min-width:auto;padding:3px 8px;font-size:11px;vertical-align:middle" onclick="MONI.eventos=[];moniRender(true)">limpiar</button></div>`;
+  html += moniEventosHTML();
+  return html;
+}
+
+function moniListaHosts() {
+  const set = new Set();
+  for (const e of MONI.equipos || []) {
+    if (e.host) set.add(e.host);
+    if (e.identidad) set.add(e.identidad);
+  }
+  for (const n of MONI.topo.nodos || []) {
+    if (n.id) set.add(n.id);
+  }
+  return [...set];
+}
+
+function moniFormAlarmaHTML() {
+  const editar = MONI.editAlarma || {};
+  const base = MONI.formTemp && MONI.formTemp.id === (editar.id || "") ? MONI.formTemp : editar;
+  const al = base;
+  const dflt = (k, d) => (al[k] === undefined || al[k] === null || al[k] === "" ? d : al[k]);
+  const sevs = ["info", "alerta", "critico"];
+  const accs = [["ninguna", "ninguna (solo avisa)"], ["manual", "manual (solo avisa)"], ["automatica", "automática (aplica costo)"]];
+  const metricas = ["total-bps", "rx-bps", "tx-bps", "pct"];
+  const ops = [">", ">=", "<", "<=", "==", "!="];
+  const hostOpts = moniListaHosts().map(h => `<option value="${moniEsc(h)}"></option>`).join("");
+  const pill = (v, txt, actual, primero) =>
+    `<button type="button" class="moni-pill${actual == null || actual === "" ? (v === primero ? " activa" : "") : (String(actual) === v ? " activa" : "")}" data-val="${moniEsc(v)}" onclick="marcarPill(this);moniFormTemp()">${moniEsc(txt)}</button>`;
+  const pills = (id, lista, actual) => `<div class="moni-pills" id="${id}">${lista.map(v => pill(v, v, actual, lista[0])).join("")}</div>`;
+  const c = (id, lbl, ex) => `<div class="moni-campo"><span class="moni-lbl">${lbl}</span>${ex}</div>`;
+  return `<div class="moni-sub">${al.id ? "Editar regla" : "Nueva regla"}</div>
+  <div class="moni-fila-form">
+    ${c("fa-nombre", "Nombre", `<input id="fa-nombre" class="largo" placeholder="p. ej. Congestión R1-R2" value="${moniEsc(al.nombre || "")}" oninput="moniFormTemp()">`)}
+    ${c("fa-equipo", "Equipo (vacío = todos)", `<input id="fa-equipo" placeholder="IP o identidad" list="moni-hosts" value="${moniEsc(al.equipo || "")}" oninput="moniFormTemp()"><datalist id="moni-hosts">${hostOpts}</datalist>`)}
+    ${c("fa-interfaz", "Interfaz (patrón)", `<input id="fa-interfaz" placeholder="ether3, ether*…" value="${moniEsc(al.interfaz || "*")}" oninput="moniFormTemp()">`)}
+    ${c("fa-metrica", "Métrica", `${pills("fa-metrica", metricas, dflt("metrica", "total-bps"))}`)}
+    ${c("fa-op", "Comparar", `${pills("fa-op", ops, dflt("operador", ">="))}`)}
+    ${c("fa-umbral", "Umbral (bps o %)", `<input id="fa-umbral" type="number" placeholder="50.000 = 50 kbps" value="${dflt("umbral", 200000)}" oninput="moniFormTemp()">`)}
+    ${c("fa-severidad", "Severidad", `${pills("fa-severidad", sevs, dflt("severidad", "alerta"))}`)}
+    ${c("fa-duracion", "Duración (s)", `<input id="fa-duracion" type="number" min="0" placeholder="seg. sostenidos" value="${dflt("duracion-s", 2)}" oninput="moniFormTemp()">`)}
+    ${c("fa-limpiar", "Limpiar (s)", `<input id="fa-limpiar" type="number" min="0" placeholder="seg. bajo el umbral" value="${dflt("limpiar-s", 5)}" oninput="moniFormTemp()">`)}
+    ${c("fa-accion", "Acción", `<div class="moni-pills" id="fa-accion">${accs.map(([v, t]) => pill(v, t, dflt("accion", "ninguna"), accs[0][0])).join("")}</div>`)}
+    ${c("fa-costo", "Costo a aplicar", `<input id="fa-costo" type="number" min="1" placeholder="si acción automática" value="${dflt("costo", 100)}" oninput="moniFormTemp()">`)}
+    ${c("fa-costo-normal", "Costo normal", `<input id="fa-costo-normal" type="number" min="1" placeholder="vacío = dinámico" value="${al["costo-normal"] ?? ""}" oninput="moniFormTemp()">`)}
+    <div class="moni-campo chk-campo"><span class="moni-lbl">Estado</span><label class="chk"><input type="checkbox" id="fa-habilitada" ${al.habilitada === false ? "" : "checked"} onchange="moniFormTemp()"> habilitada</label></div>
+    <div class="moni-campo" style="justify-content:flex-end">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-green" onclick="moniGuardarAlarma()">${al.id ? "💾 Guardar cambios" : "➕ Agregar regla"}</button>
+        ${al.id ? `<button class="btn btn-dark" onclick="MONI.editAlarma=null;MONI.formTemp=null;moniRender(true)">Cancelar</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+function pillVal(id) {
+  const g = $(id);
+  if (!g) return "";
+  const a = g.querySelector(".moni-pill.activa");
+  return a ? a.dataset.val : ((g.querySelector(".moni-pill") || {}).dataset.val || "");
+}
+
+function marcarPill(btn) {
+  const g = btn.closest(".moni-pills");
+  if (!g) return;
+  g.querySelectorAll(".moni-pill").forEach(b => b.classList.toggle("activa", b === btn));
+}
+
+function moniFormTemp() {
+  const v = id => ($(id) ? $(id).value : "");
+  MONI.formTemp = {
+    id: (MONI.editAlarma && MONI.editAlarma.id) || "",
+    nombre: v("fa-nombre").trim(),
+    equipo: v("fa-equipo").trim(),
+    interfaz: v("fa-interfaz").trim(),
+    metrica: pillVal("fa-metrica") || "total-bps",
+    operador: pillVal("fa-op") || ">=",
+    umbral: Number(v("fa-umbral")) || 200000,
+    severidad: pillVal("fa-severidad") || "alerta",
+    "duracion-s": Number(v("fa-duracion")) || 2,
+    "limpiar-s": Number(v("fa-limpiar")) || 5,
+    accion: pillVal("fa-accion") || "ninguna",
+    costo: v("fa-costo") !== "" ? Number(v("fa-costo")) : null,
+    "costo-normal": v("fa-costo-normal") !== "" ? Number(v("fa-costo-normal")) : null,
+    habilitada: $("fa-habilitada") ? $("fa-habilitada").checked : true,
+  };
+}
+
+function moniGuardarAlarma() {
+  const v = id => ($(id) ? $(id).value : "");
+  const nueva = {
+    id: (MONI.editAlarma && MONI.editAlarma.id) || ("al-" + Date.now().toString(36)),
+    nombre: v("fa-nombre").trim() || "Regla",
+    equipo: v("fa-equipo").trim(),
+    interfaz: v("fa-interfaz").trim() || "*",
+    metrica: pillVal("fa-metrica") || "total-bps",
+    operador: pillVal("fa-op") || ">=",
+    umbral: Number(v("fa-umbral")) || 0,
+    severidad: pillVal("fa-severidad") || "alerta",
+    "duracion-s": Number(v("fa-duracion")) || 0,
+    "limpiar-s": Number(v("fa-limpiar")) || 0,
+    accion: pillVal("fa-accion") || "ninguna",
+    costo: v("fa-costo") !== "" ? Number(v("fa-costo")) : null,
+    "costo-normal": v("fa-costo-normal") !== "" ? Number(v("fa-costo-normal")) : null,
+    habilitada: $( "fa-habilitada") ? $("fa-habilitada").checked : true,
+  };
+  const lista = (MONI.cfg.alarmas || []).filter(a => String(a.id) !== String(nueva.id));
+  lista.push(nueva);
+  moniSalvarAlarmas(lista);
+  MONI.editAlarma = null;
+  MONI.formTemp = null;
+}
+
+function moniEditarAlarma(id) {
+  const al = (MONI.cfg.alarmas || []).find(a => String(a.id) === id);
+  MONI.editAlarma = al ? Object.assign({}, al) : null;
+  MONI.formTemp = null;
+  moniRender(true);
+}
+
+function moniToggleAlarma(id) {
+  const lista = (MONI.cfg.alarmas || []).map(a => {
+    if (String(a.id) !== id) return a;
+    return Object.assign({}, a, { habilitada: a.habilitada === false ? true : false });
+  });
+  moniSalvarAlarmas(lista);
+}
+
+function moniBorrarAlarma(id) {
+  const al = (MONI.cfg.alarmas || []).find(a => String(a.id) === id);
+  if (!al) return;
+  if (!confirm("¿Borrar la regla '" + (al.nombre || al.id) + "'?")) return;
+  const lista = (MONI.cfg.alarmas || []).filter(a => String(a.id) !== id);
+  moniSalvarAlarmas(lista, "Regla borrada");
+}
+
+function moniSalvarAlarmas(lista, msj) {
+  moniPost("/api/alarmas", { accion: "guardar", alarmas: lista }).then(d => {
+    if (d && d.ok) {
+      MONI.cfg = d.config || MONI.cfg;
+      moniToast({ titulo: msj || "Alarmas guardadas", texto: lista.length + " regla(s)", sev: "ok" });
+      moniRender(true);
+    } else {
+      moniToast({ titulo: "No se pudo guardar", texto: (d && d.error) || "", sev: "info" });
+    }
+  });
+  setTimeout(moniCargarCfg, 350);
+}
+
+function moniEventosHTML() {
+  const evs = MONI.eventos.slice(-60).reverse();
+  if (!evs.length) return `<div class="banner-info">Sin eventos todavía. Cuando una alarma se dispare o se recupere va a aparecer acá.</div>`;
+  return `<div class="moni-eventos">` + evs.map(ev => {
+    const color = ev.tipo === "activada" ? (ev.severidad === "critico" ? "#f87171" : "#fbbf24") : "#34d399";
+    const h = new Date((ev.ts || Date.now()) * 1000).toLocaleTimeString();
+    return `<div class="moni-evento"><span class="moni-hora">${h}</span><b style="color:${color}">${ev.tipo === "activada" ? "▲" : "▼"} ${moniEsc(ev.nombre || ev.alarma || "")}</b> — ${moniEsc(ev.mensaje || "")}</div>`;
+  }).join("") + `</div>`;
+}
+
+/* ---------- Tab Métricas ---------- */
+function moniMetricasHTML() {
+  if (!MONI.metricas || !MONI.metricas.equipos) return `<div class="cargando">Consultando costos OSPF…</div>`;
+  const equipos = MONI.metricas.equipos || [];
+  let html = `<div class="moni-sub">Costos OSPF por interfaz <button class="btn btn-dark" style="min-width:auto;padding:3px 8px;font-size:11px;vertical-align:middle" onclick="MONI.metricas=null;moniCargarMetricas()">⟳ actualizar</button></div>`;
+  for (const e of equipos) {
+    if (!e.ok) { html += `<div class="banner-error">${moniEsc(e.host)}: ${moniEsc(e.error)}</div>`; continue; }
+    const filas = (e.interfaces || []).filter(i => i.interfaz && i.interfaz !== "loopback-ospf");
+    html += `<div class="moni-sub">${moniEsc(e.identidad || e.host)} <span style="color:var(--text-muted);font-weight:400;text-transform:none">(${moniEsc(e.host)})</span></div>`;
+    html += `<table><thead><tr><th>Interfaz</th><th>Dir</th><th>Costo</th><th>Tipo</th><th>Estado</th><th>DR / vecinos</th><th>Nuevo costo</th><th style="width:170px"></th></tr></thead><tbody>`;
+    for (const i of filas) {
+      const idd = (e.host + i.interfaz).replace(/[^a-zA-Z0-9]/g, "_");
+      html += `<tr>
+        <td><b>${moniEsc(i.interfaz)}</b></td>
+        <td style="font-family:Consolas,monospace;font-size:11px">${moniEsc(i.direccion || "—")}</td>
+        <td><b>${i.costo ?? "—"}</b></td>
+        <td>${i.estatico ? `<span class="etq alerta">estática</span>` : `<span class="etq arn">dinámica</span>`}</td>
+        <td>${moniEsc(i.estado || "—")}</td>
+        <td>${moniEsc(i.dr || "")}${i.dr ? " · " : ""}${i.adyacentes || 0} vec</td>
+        <td><input class="moni-costo" type="number" min="1" max="65535" id="mc-${idd}" placeholder="costo"></td>
+        <td>
+          <button class="btn btn-ospf" onclick="moniCostoMetrica('${e.host}','${i.interfaz}',true)">Enlace</button>
+          <button class="btn btn-dark" onclick="moniCostoMetrica('${e.host}','${i.interfaz}',false)">Solo</button>
+          ${i.estatico ? `<button class="btn btn-red" onclick="moniCostoRestaurar('${e.host}','${i.interfaz}')" title="Restaurar costo dinámico">⟲</button>` : ""}
+        </td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+  }
+
+  html += `<div class="moni-sub">Capacidad de los enlaces (para el % de uso)</div>`;
+  const capDef = MONI.cfg["capacidad-default"] || 100000000;
+  const satPct = MONI.cfg["saturado-pct"] || 80;
+  html += `<div class="moni-fila-form">
+    <input id="cap-def" type="number" value="${capDef}" title="Velocidad por defecto en bps (100000000 = 100 Mbps). Los equipos CHR no reportan su 'rate', por eso se setea acá.">
+    <button class="btn btn-blue" onclick="moniCapDef()">💾 Guardar default</button>
+    <input id="sat-pct" type="number" min="1" max="100" value="${satPct}" title="% de uso a partir del cual el enlace se marca como saturado en la topología.">
+    <button class="btn btn-blue" onclick="moniSatPct()">💾 Guardar umbral</button>
+    <div style="grid-column:span 4">
+      ${Object.entries(MONI.cfg.capacidades || {}).map(([k, v]) => `<span class="etq arn" style="margin-right:4px">${moniEsc(k)} = ${moniBps(v)} <button class="btn btn-red" style="padding:0 5px;font-size:10px;min-width:auto" onclick="moniCapBorrar('${moniEsc(k)}')">✕</button></span>`).join("")}
+    </div>
+  </div>`;
+  return html;
+}
+
+async function moniCostoMetrica(host, iface, enlace) {
+  const idd = (host + iface).replace(/[^a-zA-Z0-9]/g, "_");
+  const inp = document.getElementById("mc-" + idd);
+  const costo = parseInt((inp && inp.value) || "", 10);
+  if (!costo || costo < 1 || costo > 65535) { moniToast({ titulo: "Costo inválido", texto: "Entre 1 y 65535", sev: "info" }); return; }
+  const d = await moniPost("/api/metricas", { accion: "cambiar", host, interfaz: iface, costo, enlace });
+  if (d && d.ok) moniRefrescarMetricas((d.mensajes || []).join(" · "));
+  else moniToast({ titulo: "No se pudo cambiar el costo", texto: (d && d.error) || "", sev: "info" });
+}
+
+function moniRefrescarMetricas(msg) {
+  if (msg) moniToast({ titulo: "Métricas OSPF", texto: msg, sev: "ok" });
+  return moniCargarMetricas();
+}
+
+async function moniCargarMetricas() {
+  const m = await moniPost("/api/metricas", {});
+  if (m && m.ok) { MONI.metricas = m; moniRender(true); }
+  return m;
+}
+
+function moniCapDef() {
+  const v = Number($("cap-def").value);
+  if (!v || v <= 0) { moniToast({ titulo: "Capacidad inválida", texto: "Ingresá los bps (100000000 = 100 Mbps)", sev: "info" }); return; }
+  moniPost("/api/capacidades", { accion: "guardar", default: v, capacidades: MONI.cfg.capacidades || {} }).then(d => {
+    if (d && d.ok) { MONI.cfg = d.config || MONI.cfg; moniToast({ titulo: "Capacidad guardada", texto: moniBps(v), sev: "ok" }); moniRender(true); }
+    else moniToast({ titulo: "Error", texto: (d && d.error) || "", sev: "info" });
+  });
+}
+
+function moniSatPct() {
+  const v = Number($("sat-pct").value);
+  if (!v || v < 1 || v > 100) { moniToast({ titulo: "Umbral inválido", texto: "Entre 1 y 100", sev: "info" }); return; }
+  moniPost("/api/capacidades", { accion: "guardar", "saturado-pct": v }).then(d => {
+    if (d && d.ok) { MONI.cfg = d.config || MONI.cfg; moniToast({ titulo: "Umbral guardado", texto: v + "%", sev: "ok" }); moniRender(true); }
+    else moniToast({ titulo: "Error", texto: (d && d.error) || "", sev: "info" });
+  });
+}
+
+function moniCapBorrar(clave) {
+  const caps = Object.assign({}, MONI.cfg.capacidades || {});
+  delete caps[clave];
+  moniPost("/api/capacidades", { accion: "guardar", default: MONI.cfg["capacidad-default"], capacidades: caps }).then(d => {
+    if (d && d.ok) { MONI.cfg = d.config || MONI.cfg; moniRender(true); }
+  });
+}
+
+/* ---------- Toasts, sonido y notificaciones ---------- */
+function moniToast(opts) {
+  const cont = $("moni-toasts");
+  if (!cont) return;
+  const d = document.createElement("div");
+  d.className = "toast " + (opts.sev || "info");
+  d.innerHTML = `<div class="t-titulo">${moniEsc(opts.titulo || "")}</div><div>${moniEsc(opts.texto || "")}</div>`;
+  d.onclick = () => d.remove();
+  cont.appendChild(d);
+  while (cont.children.length > 5) cont.removeChild(cont.firstChild);
+  setTimeout(() => { if (d.parentNode) d.remove(); }, 9000);
+}
+
+function moniBeep(sev) {
+  if (MONI.sonido === false) return;
+  try {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return;
+    MONI.audio = MONI.audio || new Ctor();
+    const veces = sev === "critico" ? 3 : 2;
+    for (let i = 0; i < veces; i++) {
+      const o = MONI.audio.createOscillator(), g = MONI.audio.createGain();
+      o.type = "square";
+      o.frequency.value = sev === "critico" ? 660 : 880;
+      o.connect(g); g.connect(MONI.audio.destination);
+      const t = MONI.audio.currentTime + i * 0.22;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.start(t); o.stop(t + 0.2);
+    }
+  } catch (e) {}
+}
+
+function moniAlarmaNueva(ev) {
+  const sev = ev.severidad === "critico" ? "critico" : (ev.severidad === "alerta" ? "alerta" : "info");
+  moniToast({ titulo: (ev.nombre || ev.alarma || "Alarma") + " — " + (ev.identidad || ev.equipo || ""), texto: ev.mensaje || "", sev });
+  moniBeep(ev.severidad);
+  moniNotificar(ev);
+}
+
+function moniNotificar(ev) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (document.hidden === false) return;
+  try {
+    new Notification(ev.nombre || ev.alarma || "Alarma", { body: ev.mensaje || "" });
+  } catch (e) {}
+}
+</script>
+<!-- Modal confirmación de restauración -->
+<div id="modal-restaurar" class="oculto modal-overlay">
+  <div class="modal-caja">
+    <h3 style="color:var(--neon-blue);margin-top:0">⚠️ Restaurar cambio(s)</h3>
+    <p>¿Estás seguro? Se vuelve al estado de la <b>configuración anterior</b> (archivo A).</p>
+    <div class="modal-ruta" id="modal-restaurar-rutas" style="max-height:180px;overflow-y:auto"></div>
+    <p style="font-size:12px;color:var(--text-muted)">Se aplicarán estos cambios sobre el equipo conectado.</p>
+    <div class="acciones-sesion" style="margin-top:12px;">
+      <button class="btn btn-green" id="btn-confirmar-restaurar" onclick="confirmarRestaurar()">Sí, restaurar</button>
+      <button class="btn btn-dark" onclick="cerrarModalRestaurar()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

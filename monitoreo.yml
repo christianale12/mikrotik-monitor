@@ -1,0 +1,18 @@
+capacidad-default: 500000
+saturado-pct: 70
+capacidades: {}
+alarmas:
+- id: al-mv0k8qul
+  nombre: Congestion OSPF (prueba)
+  equipo: ''
+  interfaz: ether[2-9]
+  metrica: pct
+  operador: '>='
+  umbral: 70.0
+  severidad: critico
+  duracion-s: 2
+  limpiar-s: 10
+  accion: automatica
+  costo: 30
+  costo-normal: null
+  habilitada: true

@@ -1,0 +1,19 @@
+mikrotik:
+  equipo:
+    identidad: MikrotikLab
+    version: 6.49.7
+    board: CHR
+    uptime: 1d
+    fecha: oct/03/2026
+    hora: '12:00:00'
+  interfaces: []
+  ip: []
+  rutas: []
+  vlanes:
+    vlan: []
+    bridge: []
+    bridge_vlan: []
+  filtros: []
+  nat: []
+  arp: []
+  dhcp: []

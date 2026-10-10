@@ -1,0 +1,99 @@
+# Topologia OSPF del lab GNS3 (9 routers CHR en malla, R1..R9).
+# Redes entre routers (una /24 exclusiva por par, la usa la app para el /30):
+#   R1--R2  10.0.12.0/24
+#   R1--R3  10.0.13.0/24
+#   R2--R4  10.0.24.0/24
+#   R2--R5  10.0.25.0/24
+#   R3--R5  10.0.35.0/24
+#   R3--R6  10.0.36.0/24
+#   R4--R7  10.0.47.0/24
+#   R5--R7  10.0.57.0/24
+#   R5--R8  10.0.58.0/24
+#   R6--R8  10.0.68.0/24
+#   R7--R9  10.0.79.0/24
+#   R8--R9  10.0.89.0/24
+# La app NO depende de interfaces: por equipo se configura el router-id,
+# el loopback (/32 del router-id) y las redes OSPF. OSPF se levanta solo
+# en las interfaces que esten dentro de esas redes.
+ospf:
+  area: 0.0.0.0
+  redistribute-connected: true
+  equipos:
+    - host: 192.168.122.237
+      usuario: admin
+      password: "123"
+      router-id: 1.1.1.1
+      networks:
+        - 10.0.12.0/24
+        - 10.0.13.0/24
+        - 1.1.1.1/32
+    - host: 192.168.122.4
+      usuario: admin
+      password: "123"
+      router-id: 2.2.2.2
+      networks:
+        - 10.0.12.0/24
+        - 10.0.24.0/24
+        - 10.0.25.0/24
+        - 2.2.2.2/32
+    - host: 192.168.122.234
+      usuario: admin
+      password: "123"
+      router-id: 3.3.3.3
+      networks:
+        - 10.0.13.0/24
+        - 10.0.35.0/24
+        - 10.0.36.0/24
+        - 3.3.3.3/32
+    - host: 192.168.122.3
+      usuario: admin
+      password: "123"
+      router-id: 4.4.4.4
+      networks:
+        - 10.0.24.0/24
+        - 10.0.47.0/24
+        - 4.4.4.4/32
+    - host: 192.168.122.111
+      usuario: admin
+      password: "123"
+      router-id: 5.5.5.5
+      networks:
+        - 10.0.25.0/24
+        - 10.0.35.0/24
+        - 10.0.57.0/24
+        - 10.0.58.0/24
+        - 5.5.5.5/32
+    - host: 192.168.122.176
+      usuario: admin
+      password: "123"
+      router-id: 6.6.6.6
+      networks:
+        - 10.0.36.0/24
+        - 10.0.68.0/24
+        - 6.6.6.6/32
+    - host: 192.168.122.253
+      usuario: admin
+      password: "123"
+      router-id: 7.7.7.7
+      networks:
+        - 10.0.47.0/24
+        - 10.0.57.0/24
+        - 10.0.79.0/24
+        - 7.7.7.7/32
+    - host: 192.168.122.248
+      usuario: admin
+      password: "123"
+      router-id: 8.8.8.8
+      networks:
+        - 10.0.58.0/24
+        - 10.0.68.0/24
+        - 10.0.89.0/24
+        - 8.8.8.8/32
+    - host: 192.168.122.129
+      usuario: admin
+      password: "123"
+      router-id: 9.9.9.9
+      networks:
+        - 10.0.79.0/24
+        - 10.0.89.0/24
+        - 9.9.9.9/32

@@ -1,0 +1,19 @@
+# Entornos virtuales
+.venv/
+venv/
+
+# Bytecode de Python
+__pycache__/
+*.py[cod]
+
+# Builds de PyInstaller
+build/
+dist/
+*.exe
+
+# Respaldos locales
+templates/*.bak*
+templates/*.before_revert*
+
+# Configuraciones/logs locales
+*.log
