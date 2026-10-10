@@ -36,6 +36,8 @@
     --info-bg: rgba(56, 189, 248, 0.1);
     --info-border: #0284c7;
     --info-text: #7dd3fc;
+
+    color-scheme: dark;
   }
 
   * { box-sizing: border-box; }
@@ -116,6 +118,12 @@
     color: var(--text-main); font-size: 13px; outline: none;
   }
   input:focus, select:focus { border-color: var(--neon-cyan); box-shadow: 0 0 8px rgba(56,189,248,0.3); }
+  select.sel-equipo {
+    width: auto; min-width: 210px; max-width: 340px; flex: 0 1 auto;
+    background: #0b1120; color: var(--text-main);
+    border: 1px solid var(--neon-cyan);
+  }
+  select.sel-equipo option { background: #0b1120; color: var(--text-main); }
 
   .btn {
     border: none; border-radius: 6px; padding: 10px 16px;
@@ -435,8 +443,8 @@
       <div class="banner-ok">
         <span id="sesion-txt">Conectado</span>
         <span style="flex:1"></span>
-        <label for="select-equipo" style="margin-right:6px;">Equipo:</label>
-        <select id="select-equipo" onchange="cambiarEquipo()" style="min-width:180px;"></select>
+        <label for="select-equipo" style="margin-right:6px;">Equipo activo:</label>
+        <select id="select-equipo" class="sel-equipo" onchange="cambiarEquipo()" title="Elegí con qué equipo trabajar"></select>
         <button class="btn btn-red" onclick="desconectar()">Cerrar sesión</button>
       </div>
 
@@ -655,13 +663,14 @@ async function conectarMulti(equipos) {
     const body = new FormData();
     body.append("categoria", "estado");
     body.append("host", host);
-    const er = await fetch("/api/datos", { method: "POST", body });
-    const ed = await er.json();
-    if (ed.ok && ed.datos) {
-      $("sesion-txt").textContent = "Conectado a " + host;
-      pintarEstado(ed.datos);
-      $("resultado").innerHTML = estadoHTML(ed.datos);
-    }
+    try {
+      const er = await fetch("/api/datos", { method: "POST", body });
+      const ed = await er.json();
+      if (ed.ok && ed.datos) {
+        pintarEstado(ed.datos);
+        $("resultado").innerHTML = estadoHTML(ed.datos);
+      }
+    } catch (e) { /* el equipo ya quedó seleccionado más arriba */ }
   }
 }
 
@@ -683,19 +692,33 @@ async function conectar() {
 }
 
 async function cargarEquipos(activoHost) {
-  const resp = await fetch("/api/equipos", { method: "POST" });
-  const data = await resp.json();
   const sel = $("select-equipo");
-  if (!data.ok || !data.equipos.length) return;
-  sel.innerHTML = data.equipos.map(e =>
+  if (!sel) return;
+  let equipos = [];
+  try {
+    const resp = await fetch("/api/equipos", { method: "POST" });
+    const data = await resp.json();
+    if (data && data.ok && data.equipos) equipos = data.equipos;
+  } catch (e) { equipos = []; }
+  if (!equipos.length) {
+    const h = activoHost || window.__equipoActivo || "";
+    sel.innerHTML = h
+      ? `<option value="${h}">${h}</option>`
+      : `<option value="">(sin equipos conectados)</option>`;
+    window.__equipoActivo = sel.value;
+    marcarSesion();
+    return;
+  }
+  sel.innerHTML = equipos.map(e =>
     `<option value="${e.host}">${e.host}${e.identidad ? " · " + e.identidad : ""}</option>`
   ).join("");
-  let active = activoHost || data.activo || data.equipos[0].host;
+  let active = activoHost || window.__equipoActivo || "";
   if (active) {
     const matches = [...sel.options].filter(o => o.value === active);
     if (matches.length) sel.value = active;
   }
   window.__equipoActivo = sel.value;
+  marcarSesion();
 }
 
 function equipoActivo() {
@@ -703,21 +726,39 @@ function equipoActivo() {
   return sel && sel.value ? sel.value : (window.__equipoActivo || "");
 }
 
+function etiquetaEquipo() {
+  const sel = $("select-equipo");
+  if (!sel || sel.selectedIndex < 0) return equipoActivo();
+  const opt = sel.options[sel.selectedIndex];
+  return opt ? (opt.textContent || "").trim() : (sel.value || "");
+}
+
+function marcarSesion() {
+  const e = $("sesion-txt");
+  if (!e) return;
+  const t = etiquetaEquipo();
+  e.textContent = t ? ("Conectado a " + t) : "Conectado";
+}
+
 async function cambiarEquipo() {
   const sel = $("select-equipo");
   if (!sel) return;
   window.__equipoActivo = sel.value;
+  marcarSesion();
   const body = new FormData();
   body.append("categoria", "estado");
   body.append("host", sel.value);
-  const resp = await fetch("/api/datos", { method: "POST", body });
-  const data = await resp.json();
-  if (data.ok && data.datos) {
-    $("sesion-txt").textContent = "Conectado a " + sel.value;
-    pintarEstado(data.datos);
-    $("resultado").innerHTML = estadoHTML(data.datos);
-  } else if (data.error) {
-    setError(data.error);
+  try {
+    const resp = await fetch("/api/datos", { method: "POST", body });
+    const data = await resp.json();
+    if (data.ok && data.datos) {
+      pintarEstado(data.datos);
+      $("resultado").innerHTML = estadoHTML(data.datos);
+    } else if (data.error) {
+      setError(data.error);
+    }
+  } catch (e) {
+    setError("No se pudo leer el estado del equipo.");
   }
 }
 
