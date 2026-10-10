@@ -526,20 +526,30 @@ def api_direccionamiento():
     datos = _datos_request()
     accion = str(datos.get("accion") or "listar").strip().lower()
 
+    def _aplicar_ya():
+        try:
+            mono.aplicar_regla_ahora(SESIONES)
+        except Exception:  # noqa: BLE001
+            pass
+
     if accion == "guardar":
         cfg = mono.guardar_direccionamiento(datos.get("reglas") or datos.get("direccionamiento"))
+        threading.Thread(target=_aplicar_ya, daemon=True).start()
         return jsonify({"ok": True, "config": cfg})
 
     if accion == "borrar":
         cfg = mono.borrar_regla(datos.get("id"))
+        threading.Thread(target=_aplicar_ya, daemon=True).start()
         return jsonify({"ok": True, "config": cfg})
 
     if accion == "activar":
         cfg = mono.activar_regla(datos.get("id"))
+        threading.Thread(target=_aplicar_ya, daemon=True).start()
         return jsonify({"ok": True, "config": cfg})
 
     if accion in ("desactivar", "quitar"):
         cfg = mono.desactivar_regla()
+        threading.Thread(target=_aplicar_ya, daemon=True).start()
         return jsonify({"ok": True, "config": cfg})
 
     if accion == "restaurar":

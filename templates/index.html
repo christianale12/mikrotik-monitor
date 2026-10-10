@@ -1241,7 +1241,7 @@ const MONI = {
   equipos: [], alarmas: [], topo: { nodos: [], enlaces: [] },
   eventos: [], cfg: { alarmas: [], capacidades: {}, "capacidad-default": 100000000 },
   metricas: null, selEnlace: null, editAlarma: null, filtroNodo: "",
-  dir: { vigente: null, aplicado: [], caminos: [] }, editRegla: null,
+  dir: { vigente: null, aplicado: [], caminos: [] }, editRegla: null, reglaVer: null,
   camino: { nodos: [], aristas: [] }, grafoFull: false,
   sonido: true, notifPedida: false, audio: null,
   slots: null, hist: {},
@@ -1269,6 +1269,14 @@ function moniBps(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(2) + " Mbps";
   if (n >= 1e3) return (n / 1e3).toFixed(1) + " kbps";
   return n.toFixed(0) + " bps";
+}
+
+function moniEtqMetrica(m) {
+  const u = {
+    "total-bps": "Total", "red-bps": "Total de red",
+    "rx-bps": "RX", "tx-bps": "TX", "pct": "% saturación",
+  };
+  return u[m] || m;
 }
 
 function moniBits(n, unidad) {
@@ -1394,7 +1402,13 @@ function moniRender(force) {
   if (!cuerpo) return;
   const foco = document.activeElement;
   const editando = foco && foco.tagName && /INPUT|SELECT|TEXTAREA|BUTTON/.test(foco.tagName) && cuerpo.contains(foco);
-  if (editando && !force) { moniBadges(); return; }
+  // Mientras se arma/edita una regla, NO hay que rehacer la pestaña en cada
+  // sondeo: si no, se borra lo tipeado y se reemplaza el mapa en medio de un
+  // clic (por eso "a veces funcionaba"). Se persiste el borrador en moniDirTemp.
+  const ed = MONI.editRegla;
+  const editandoDir = MONI.tab === "direccionamiento" && (MONI.grafoFull ||
+    !!(ed && (ed.id || ed.nombre || ed.origen || ed.destino || (ed.entradas || []).length)));
+  if ((editando || editandoDir) && !force) { moniBadges(); return; }
   try {
     if (MONI.tab === "trafico") cuerpo.innerHTML = moniTraficoHTML();
     else if (MONI.tab === "topologia") cuerpo.innerHTML = moniTopologiaHTML();
@@ -1758,7 +1772,7 @@ function moniAlarmasHTML() {
       html += `<tr>
         <td>${moniEsc(al.nombre || al.id)}${al.habilitada === false ? ' <span class="etq arn">desactivada</span>' : ""}</td>
         <td>${moniEsc(al.equipo || "todos")} · ${moniEsc(al.interfaz || "*")}</td>
-        <td>${moniEsc(al.metrica)} ${moniEsc(al.operador)} ${al.metrica === "pct" ? Number(al.umbral).toFixed(1) + "%" : moniEsc(moniBps(al.umbral))} · dur ${Number(al["duracion-s"] || 0)}s</td>
+        <td>${moniEsc(moniEtqMetrica(al.metrica))} ${moniEsc(al.operador)} ${al.metrica === "pct" ? Number(al.umbral).toFixed(1) + "%" : moniEsc(moniBps(al.umbral))} · dur ${Number(al["duracion-s"] || 0)}s</td>
         <td><span class="etq ${moniEsc(al.severidad)}">${moniEsc(al.severidad)}</span></td>
         <td>${moniAccionAlarma(al)}</td>
         <td>
@@ -1780,7 +1794,7 @@ function moniAlarmasHTML() {
         <td><b>${moniEsc(a.nombre || a.id)}</b> <span class="etq ${moniEsc(a.severidad)}">${moniEsc(a.severidad)}</span></td>
         <td>${moniEsc(a.identidad || a.host || "—")}</td>
         <td>${moniEsc(a.interfaz)}</td>
-        <td>${moniEsc(a.metrica)} ${moniEsc(a.operador)} ${a.metrica === "pct" ? Number(a.umbral).toFixed(1) + "%" : moniEsc(moniBps(a.umbral))}</td>
+        <td>${moniEsc(moniEtqMetrica(a.metrica))} ${moniEsc(a.operador)} ${a.metrica === "pct" ? Number(a.umbral).toFixed(1) + "%" : moniEsc(moniBps(a.umbral))}</td>
         <td>${a.valor === null || a.valor === undefined ? "—" : (a.metrica === "pct" ? Number(a.valor).toFixed(1) + "%" : moniBps(a.valor))}</td>
         <td>${moniEstadoAlarma(a)}</td>
       </tr>`;
@@ -1812,7 +1826,7 @@ function moniFormAlarmaHTML() {
   const dflt = (k, d) => (al[k] === undefined || al[k] === null || al[k] === "" ? d : al[k]);
   const sevs = ["info", "alerta", "critico"];
   const accs = [["ninguna", "ninguna (solo avisa)"], ["manual", "manual (solo avisa)"], ["automatica", "automática (aplica costo)"]];
-  const metricas = [["total-bps", "Total"], ["rx-bps", "RX"], ["tx-bps", "TX"], ["pct", "% saturación"]];
+  const metricas = [["total-bps", "Total (1 interfaz)"], ["red-bps", "Total de red (suma)"], ["rx-bps", "RX"], ["tx-bps", "TX"], ["pct", "% saturación"]];
   const ops = [">", ">=", "<", "<=", "==", "!="];
   const hostOpts = moniListaHosts().map(h => `<option value="${moniEsc(h)}"></option>`).join("");
   const pill = (v, txt, actual, primero) =>
@@ -2125,6 +2139,23 @@ function moniDirLeerEntradas() {
   return out;
 }
 
+/* Guarda lo que el usuario va tipeando en el borrador (MONI.editRegla) para que
+   sobreviva al refresco periódico de la pestaña. */
+function moniDirTemp() {
+  const d = MONI.editRegla || (MONI.editRegla = {});
+  const val = id => ($(id) ? $(id).value : "");
+  if ($("dir-nombre")) d.nombre = val("dir-nombre");
+  if ($("dir-origen")) d.origen = val("dir-origen");
+  if ($("dir-destino")) d.destino = val("dir-destino");
+  if ($("dir-habilitada")) d.habilitada = $("dir-habilitada").checked;
+  if ($("dir-costo-camino")) d["costo-camino"] = val("dir-costo-camino");
+  if ($("dir-costo-evitar")) d["costo-evitar"] = val("dir-costo-evitar");
+  const desde = val("dir-desde"), hasta = val("dir-hasta");
+  if ($("dir-desde") || $("dir-hasta")) {
+    d.horario = (desde && hasta) ? { desde, hasta, dias: moniDiasSeleccionados() } : null;
+  }
+}
+
 /* --- Mini-grafo para armar el camino de la regla con clics --- */
 const COL_DIR_D = "#22d3ee";
 const COL_EVIT_D = "#f59e0b";
@@ -2133,11 +2164,28 @@ function moniNodoInfo(id) {
   return (MONI.topo.nodos || []).find(n => n.id === id) || null;
 }
 
-function moniReglaEnEdicion() {
+function moniBuscarRegla(id) {
+  return (MONI.cfg.direccionamiento || []).find(r => String(r.id) === String(id)) || null;
+}
+
+function moniReglaVisible() {
+  // Qué regla se está mostrando en el mapa: la que se edita, si no la que se
+  // clickeó para mirar, y si no la vigente.
   if (MONI.editRegla) return MONI.editRegla;
+  if (MONI.reglaVer) {
+    const r = moniBuscarRegla(MONI.reglaVer);
+    if (r) return r;
+  }
   const d = MONI.dir || {};
-  if (!d.reglaActiva) return null;
-  return (d.reglas || []).find(r => r.id === d.reglaActiva) || null;
+  if (d.vigente) {
+    const r = moniBuscarRegla(d.vigente.id);
+    if (r) return r;
+  }
+  return null;
+}
+
+function moniReglaEnEdicion() {
+  return moniReglaVisible();
 }
 
 function moniAristasEvitar() {
@@ -2214,8 +2262,21 @@ function moniCaminoNodo(id) {
   if (!info || info.externo) return;
   const c = MONI.camino || (MONI.camino = { nodos: [], aristas: [] });
   const ult = c.nodos[c.nodos.length - 1];
-  if (!c.nodos.length) c.nodos = [id];
-  else if (ult !== id) { c.nodos = [id]; c.aristas = []; }
+  if (!c.nodos.length) { c.nodos = [id]; }
+  else if (ult !== id) {
+    // Si el router clickeado es vecino del último, extiende el camino por ese
+    // enlace (clickear routers en cadena también arma la ruta). Si no, empieza
+    // un camino nuevo desde el router clickeado.
+    const enlaces = MONI.topo.enlaces || [];
+    let idx = -1;
+    for (let k = 0; k < enlaces.length; k++) {
+      const p = moniPuntas(enlaces[k]);
+      if (!p.a || !p.b) continue;
+      if ((p.a.nodo === ult && p.b.nodo === id) || (p.b.nodo === ult && p.a.nodo === id)) { idx = k; break; }
+    }
+    if (idx >= 0) { c.aristas.push({ idx, desde: ult }); c.nodos.push(id); }
+    else { c.nodos = [id]; c.aristas = []; }
+  }
   moniCaminoRefrescar();
 }
 
@@ -2397,10 +2458,11 @@ function moniDireccionamientoHTML() {
   const activa = MONI.cfg["regla-activa"];
   const vig = MONI.dir && MONI.dir.vigente;
   const ed = MONI.editRegla || {};
-  // Si no estamos editando, mostramos siempre el camino de la regla vigente
-  // para que "el camino seleccionado" quede fijo en el mapa tras aplicar.
-  if (!MONI.editRegla && (!MONI.camino || !MONI.camino.nodos.length) && vig) {
-    const rv = reglas.find(r => String(r.id) === String(vig.id));
+  // Si no estamos editando, el mapa muestra el camino de la regla elegida
+  // (la clickeada para mirar, o si no la vigente). Así clickear una regla
+  // pinta su recorrido sin tener que entrar a editar.
+  if (!MONI.editRegla && (!MONI.camino || !MONI.camino.nodos.length)) {
+    const rv = moniReglaVisible();
     if (rv) moniReconstruirCamino(rv);
   }
   let html = `<div class="moni-sub">Estado</div>`;
@@ -2430,27 +2492,28 @@ function moniDireccionamientoHTML() {
 
   html += `<div class="moni-sub">${ed.id ? "Editar regla" : "Nueva regla de direccionamiento"}</div>`;
   html += `<div class="moni-fila-form">
-    <div class="moni-campo"><span class="moni-lbl">Nombre</span><input id="dir-nombre" class="largo" placeholder="p. ej. trafico-mañana" value="${moniEsc(ed.nombre || "")}"></div>
-    <div class="moni-campo"><span class="moni-lbl">Origen (para mostrar el camino)</span><input id="dir-origen" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.origen || "")}"></div>
-    <div class="moni-campo"><span class="moni-lbl">Destino</span><input id="dir-destino" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.destino || "")}"></div>
-    <div class="moni-campo"><span class="moni-lbl">Horario desde (opcional)</span><input id="dir-desde" type="time" value="${moniEsc(ed.horario ? ed.horario.desde : "")}"></div>
-    <div class="moni-campo"><span class="moni-lbl">Horario hasta</span><input id="dir-hasta" type="time" value="${moniEsc(ed.horario ? ed.horario.hasta : "")}"></div>
-    <div class="moni-campo"><span class="moni-lbl">Días (vacío = todos)</span><div style="display:flex;gap:8px;flex-wrap:wrap">${["lun","mar","mie","jue","vie","sab","dom"].map(d => `<label class="chk"><input type="checkbox" class="dir-dia" value="${d}" ${ed.horario && (ed.horario.dias || []).indexOf(d) >= 0 ? "checked" : ""}> ${d}</label>`).join("")}</div></div>
-    <div class="moni-campo chk-campo"><span class="moni-lbl">Estado</span><label class="chk"><input type="checkbox" id="dir-habilitada" ${ed.habilitada === false ? "" : "checked"}> habilitada</label></div>
+    <div class="moni-campo"><span class="moni-lbl">Nombre</span><input id="dir-nombre" class="largo" placeholder="p. ej. trafico-mañana" value="${moniEsc(ed.nombre || "")}" oninput="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Origen (para mostrar el camino)</span><input id="dir-origen" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.origen || "")}" oninput="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Destino</span><input id="dir-destino" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.destino || "")}" oninput="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Horario desde (opcional)</span><input id="dir-desde" type="time" value="${moniEsc(ed.horario ? ed.horario.desde : "")}" oninput="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Horario hasta</span><input id="dir-hasta" type="time" value="${moniEsc(ed.horario ? ed.horario.hasta : "")}" oninput="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Días (vacío = todos)</span><div style="display:flex;gap:8px;flex-wrap:wrap">${["lun","mar","mie","jue","vie","sab","dom"].map(d => `<label class="chk"><input type="checkbox" class="dir-dia" value="${d}" ${ed.horario && (ed.horario.dias || []).indexOf(d) >= 0 ? "checked" : ""} onchange="moniDirTemp()"> ${d}</label>`).join("")}</div></div>
+    <div class="moni-campo chk-campo"><span class="moni-lbl">Estado</span><label class="chk"><input type="checkbox" id="dir-habilitada" ${ed.habilitada === false ? "" : "checked"} onchange="moniDirTemp()"> habilitada</label></div>
   </div>
   <div class="moni-sub" style="margin-top:8px">1) Armá el camino con clics en el mapa</div>
   <div style="font-size:12px;color:var(--text-muted)">Clic en un router para empezar y luego clic en cada enlace hasta completar el camino. Cada nodo muestra el <b>nombre del router</b> (grande) y su IP (chico). Los elegidos se marcan en <span style="color:${COL_DIR_D}">celeste</span>. Usá <b>⛶ Ampliar mapa</b> si querés verlo más grande y <b>🚫 Forzar este camino</b> para que OSPF tenga que ir por acá.</div>
   <div style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap">
     <span class="moni-lbl">Costo de la ruta</span>
-    <input id="dir-costo-camino" type="number" min="1" max="65535" value="1" style="width:90px">
+    <input id="dir-costo-camino" type="number" min="1" max="65535" value="${moniEsc(ed["costo-camino"] != null ? ed["costo-camino"] : 1)}" style="width:90px" oninput="moniDirTemp()">
     <span class="moni-lbl">Costo a evitar</span>
-    <input id="dir-costo-evitar" type="number" min="1" max="65535" value="65535" style="width:100px">
+    <input id="dir-costo-evitar" type="number" min="1" max="65535" value="${moniEsc(ed["costo-evitar"] != null ? ed["costo-evitar"] : 65535)}" style="width:100px" oninput="moniDirTemp()">
     <button class="btn btn-red" onclick="moniCaminoForzar()" title="Deja los enlaces elegidos en el costo de la ruta y sube el resto, para forzar el camino">🚫 Forzar este camino</button>
     <button class="btn btn-dark" onclick="moniCaminoRefrescar()" title="Aplica el costo solo a los enlaces elegidos">Aplicar a la ruta</button>
     <button class="btn btn-amber" onclick="moniCaminoReiniciar()">⟲ Reiniciar camino</button>
     <button class="btn btn-dark" onclick="MONI.grafoFull=true;moniCaminoRefrescar()">⛶ Ampliar mapa</button>
     <span id="dir-camino-resumen" style="font-family:Consolas,monospace;font-size:12px;color:${COL_DIR_D}"></span>
   </div>
+  <div class="banner-info" style="margin:4px 0">Mostrando el camino de: <b>${moniEsc((moniReglaVisible() || {}).nombre || (moniReglaVisible() || {}).id || "—")}</b>${MONI.editRegla ? " (editando)" : (MONI.reglaVer ? "" : " (regla vigente)")}. Clic en una regla de la lista para ver su recorrido.</div>
   <div id="dir-grafo">${moniGrafoSVG()}</div>
   <div class="moni-sub" style="margin-top:8px">2) Costos de la regla (equipo · interfaz · costo)</div>
   <datalist id="dir-hosts">${moniDirHostsOpts()}</datalist>
@@ -2465,22 +2528,25 @@ function moniDireccionamientoHTML() {
   html += `<div class="moni-sub">Reglas configuradas (${reglas.length})</div>`;
   if (!reglas.length) html += `<div class="banner-info">Todavía no hay reglas de direccionamiento.</div>`;
   else {
-    html += `<table><thead><tr><th>Nombre</th><th>Horario</th><th>Camino</th><th>Entradas</th><th>Estado</th><th style="width:190px"></th></tr></thead><tbody>`;
+    html += `<table><thead><tr><th>Nombre</th><th>Horario</th><th>Camino</th><th>Entradas</th><th>Estado</th><th style="width:230px"></th></tr></thead><tbody>`;
     for (const r of reglas) {
       const esVig = vig && String(vig.id) === String(r.id);
       const esManual = String(activa) === String(r.id);
+      const esVer = String(MONI.reglaVer || "") === String(r.id);
       let etq = "";
       if (esVig) etq += `<span class="etq ok">vigente (${moniEsc(vig.modo)})</span> `;
       else if (esManual) etq += `<span class="etq arn">manual</span> `;
       if (r.habilitada === false) etq += `<span class="etq down">deshabilitada</span>`;
       if (!etq) etq = `<span class="etq">—</span>`;
-      html += `<tr>
-        <td><b>${moniEsc(r.nombre || r.id)}</b></td>
-        <td>${moniDirHorarioTxt(r)}</td>
-        <td style="font-family:Consolas,monospace;font-size:12px">${(r.origen || r.destino) ? moniEsc(r.origen || "?") + " → " + moniEsc(r.destino || "?") : "—"}</td>
+      const est = esVer ? ' style="outline:1px solid #22d3ee;outline-offset:-1px"' : "";
+      html += `<tr${est}>
+        <td style="cursor:pointer" onclick="moniVerRegla(moniJsStr('${moniEsc(r.id)}'))" title="Ver el camino de esta regla en el mapa"><b>${moniEsc(r.nombre || r.id)}</b></td>
+        <td style="cursor:pointer" onclick="moniVerRegla(moniJsStr('${moniEsc(r.id)}'))">${moniDirHorarioTxt(r)}</td>
+        <td style="font-family:Consolas,monospace;font-size:12px;cursor:pointer" onclick="moniVerRegla(moniJsStr('${moniEsc(r.id)}'))">${(r.origen || r.destino) ? moniEsc(r.origen || "?") + " → " + moniEsc(r.destino || "?") : "—"}</td>
         <td>${(r.entradas || []).length}</td>
         <td>${etq}</td>
         <td>
+          <button class="btn ${esVer ? "btn-ospf" : "btn-dark"}" onclick="moniVerRegla(moniJsStr('${moniEsc(r.id)}'))" title="Ver el camino de esta regla en el mapa">${esVer ? "👁 Viendo" : "👁 Ver"}</button>
           <button class="btn btn-ospf" onclick="moniAplicarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Aplicar esta regla ahora">▶ Aplicar</button>
           <button class="btn btn-dark" onclick="moniEditarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Editar">✏️</button>
           <button class="btn btn-amber" onclick="moniToggleRegla(moniJsStr('${moniEsc(r.id)}'))" title="Habilitar / deshabilitar">${r.habilitada === false ? "▶" : "⏸"}</button>
@@ -2522,13 +2588,26 @@ function moniGuardarRegla() {
   const lista = (MONI.cfg.direccionamiento || []).filter(r => String(r.id) !== String(regla.id));
   lista.push(regla);
   MONI.editRegla = null;
+  MONI.reglaVer = regla.id;
   MONI.camino = { nodos: [], aristas: [] };
   moniSalvarReglas(lista, "Regla guardada");
+}
+
+function moniVerRegla(id) {
+  id = id || "";
+  const ya = MONI.reglaVer && String(MONI.reglaVer) === String(id);
+  MONI.reglaVer = ya ? null : (id || null);
+  MONI.editRegla = null;   // salir de edición para poder ver otra regla
+  MONI.camino = { nodos: [], aristas: [] };
+  const r = moniReglaVisible();
+  if (r) moniReconstruirCamino(r);
+  moniRender(true);
 }
 
 function moniEditarRegla(id) {
   const r = (MONI.cfg.direccionamiento || []).find(x => String(x.id) === id);
   MONI.editRegla = r ? JSON.parse(JSON.stringify(r)) : null;
+  MONI.reglaVer = id;
   moniReconstruirCamino(MONI.editRegla);
   moniRender(true);
 }
@@ -2554,7 +2633,10 @@ function moniAplicarRegla(id) {
   moniPost("/api/direccionamiento", { accion: "activar", id }).then(d => {
     if (d && d.ok) {
       MONI.cfg = d.config || MONI.cfg;
-      moniToast({ titulo: "Regla aplicada", texto: "Los costos se aplican en el próximo ciclo.", sev: "ok" });
+      MONI.editRegla = null;
+      MONI.reglaVer = id;
+      MONI.camino = { nodos: [], aristas: [] };
+      moniToast({ titulo: "Regla aplicada", texto: "Aplicando los costos ahora. OSPF puede tardar unos segundos en reconverger.", sev: "ok" });
       moniRender(true);
     } else moniToast({ titulo: "No se pudo aplicar", texto: (d && d.error) || "", sev: "info" });
   });

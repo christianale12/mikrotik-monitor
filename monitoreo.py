@@ -35,7 +35,7 @@ SATURADO_PCT_DEFECTO = 80
 OLVIDO_TOPO = 120.0
 MUESTRA_VIEJA = 60.0
 TOPO_TTL = 4.0
-METRICAS = ("rx-bps", "tx-bps", "total-bps", "pct")
+METRICAS = ("rx-bps", "tx-bps", "total-bps", "red-bps", "pct")
 OPERADORES = (">", ">=", "<", "<=", "==", "!=")
 
 _lock = threading.RLock()
@@ -55,6 +55,7 @@ _mem_enlaces = {}   # (host, iface) -> {"peer_host","peer_iface","peer_nodo","ts
 _rutas_cache = {}   # host -> (ts, {destino: interfaz-Salida})
 _aplicado = {}      # (host, iface) -> {"costo": int, "origen": str}  (lo que el motor dejó puesto)
 _fallback = {}      # (host, iface) -> {"costo": int, "alarma": id}  (costo "normal" al liberar)
+_efectos_activos = []  # últimos efectos de alarmas, para no pisarlos al cambiar de regla
 DIAS = ("lun", "mar", "mie", "jue", "vie", "sab", "dom")
 
 
@@ -1219,6 +1220,7 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
     if cambios:
         with _lock:
             _topo["ts"] = 0.0
+            _rutas_cache.clear()   # que el próximo trazado de camino no use rutas viejas
         _guardar()
     return cambios
 
@@ -1226,12 +1228,18 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
 def _evaluar_alarmas(sesiones, topo, equipos, ahora):
     """Mantiene el estado de cada regla y lanza eventos.
 
-    La regla se evalua por cada interfaz que matchea su alcance
-    (equipo/identidad y patron de interfaz), asi que una sola regla
-    puede disparar varias instancias a la vez. El cambio de costo no se
-    aplica aca: se devuelve la lista de 'efectos' activos y el
-    reconciliador (con prioridad sobre las reglas de direccionamiento) es
-    el que deja los costos puestos.
+    Por defecto la regla se evalua por cada interfaz que matchea su alcance
+    (equipo/identidad y patron de interfaz), asi que una sola regla puede
+    disparar varias instancias a la vez.
+
+    Con metrica "red-bps" la regla se evalua sobre la SUMA de rx+tx de
+    TODAS las interfaces que matchean el alcance; es el mismo numero que
+    muestra la tarjeta "Trafico total" del monitor, para que el umbral se
+    pueda leer directo de ahi.
+
+    El cambio de costo no se aplica aca: se devuelve la lista de 'efectos'
+    activos y el reconciliador (con prioridad sobre las reglas de
+    direccionamiento) es el que deja los costos puestos.
 
     Devuelve (resumen, efectos).
     """
@@ -1251,106 +1259,49 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
         limpia = float(al.get("limpiar-s") or 0)
         severidad = str(al.get("severidad") or "alerta")
         accion = str(al.get("accion") or "manual")
-        coincidencias = 0
+        try:
+            costo = int(float(al.get("costo"))) if al.get("costo") is not None else None
+        except (TypeError, ValueError):
+            costo = None
+        try:
+            cn = int(float(al.get("costo-normal"))) if al.get("costo-normal") is not None else None
+        except (TypeError, ValueError):
+            cn = None
+
+        # Interfaces que matchean el alcance de la regla.
+        alcance = []
         for eq_datos in equipos:
             if not eq_datos.get("ok"):
                 continue
             host = eq_datos["host"]
             if eq and eq not in (host, eq_datos.get("identidad") or ""):
                 continue
+            ident = eq_datos.get("identidad") or ""
             for fila in eq_datos.get("interfaces") or []:
                 iface = fila.get("nombre") or ""
                 if not fnmatch.fnmatchcase(iface, patron):
                     continue
+                alcance.append((host, ident, iface, fila))
+
+        # Instancias a evaluar: una por interfaz, o una sola con la suma.
+        if metrica == "red-bps":
+            if alcance:
+                suma = sum(_entero(f[3].get("total-bps")) for f in alcance)
+                orden = sorted(alcance,
+                               key=lambda f: -_entero(f[3].get("total-bps")))
+                instancias = [(f"red|{patron}", suma, "", "", patron, orden[:1], orden)]
+            else:
+                instancias = []
+        else:
+            instancias = []
+            for (host, ident, iface, fila) in alcance:
                 valor = _valor_metrica(fila, metrica)
                 if valor is None:
                     continue
-                coincidencias += 1
-                clave = f"{al['id']}|{host}|{iface}"
-                with _lock:
-                    est = _estados.setdefault(clave, {
-                        "activa": False, "cond": None, "t": ahora,
-                        "valor": valor, "desde": ahora, "costos": [],
-                    })
-                cumple = _cumple(valor, op, umbral)
-                if cumple != bool(est.get("cond")):
-                    est["cond"] = cumple
-                    est["t"] = ahora
-                est["valor"] = valor
-                if cumple and not est["activa"] and ahora - est["t"] >= dur:
-                    est["activa"] = True
-                    est["desde"] = ahora
-                    mensaje = (f"{eq_datos.get('identidad') or host} {iface}: "
-                               f"{metrica}={valor} {op} {umbral:g} ({severidad})")
-                    accion_txt = ""
-                    if accion == "automatica":
-                        costo = al.get("costo")
-                        try:
-                            costo = int(float(costo)) if costo is not None else None
-                        except (TypeError, ValueError):
-                            costo = None
-                        if costo is not None:
-                            efectos.append({
-                                "equipo": host, "interfaz": iface,
-                                "costo": max(1, min(65535, costo)),
-                                "alarma": al["id"],
-                                "nombre": al.get("nombre") or al["id"],
-                            })
-                            accion_txt = f"costo {costo} al enlace (prioridad alarma)"
-                            mensaje += f" -> {accion_txt}"
-                        cn = al.get("costo-normal")
-                        try:
-                            cn = int(float(cn)) if cn is not None else None
-                        except (TypeError, ValueError):
-                            cn = None
-                        if cn is not None:
-                            with _lock:
-                                for par in _extremos(topo, host, iface):
-                                    _fallback[par] = {"costo": max(1, min(65535, cn)),
-                                                      "alarma": al["id"]}
-                    _nuevo_evento(tipo="activada", alarma=al["id"],
-                                   nombre=al.get("nombre") or al["id"],
-                                   severidad=severidad, equipo=host,
-                                   identidad=eq_datos.get("identidad") or "",
-                                   interfaz=iface, valor=valor, umbral=umbral,
-                                   metrica=metrica, mensaje=mensaje,
-                                   detalle=accion_txt)
-                elif not cumple and est["activa"] and ahora - est["t"] >= limpia:
-                    est["activa"] = False
-                    est["desde"] = ahora
-                    mensaje = (f"{eq_datos.get('identidad') or host} {iface}: "
-                               f"{metrica}={valor} recuperada")
-                    if accion == "automatica":
-                        mensaje += " (vuelve a la regla de direccionamiento activa)"
-                    est["costos"] = []
-                    _nuevo_evento(tipo="desactivada", alarma=al["id"],
-                                   nombre=al.get("nombre") or al["id"],
-                                   severidad="ok", equipo=host,
-                                   identidad=eq_datos.get("identidad") or "",
-                                   interfaz=iface, valor=valor, umbral=umbral,
-                                   metrica=metrica, mensaje=mensaje, detalle="")
-                if est["activa"]:
-                    previa = fila.get("alarma")
-                    if orden_sev.get(severidad, 0) >= orden_sev.get(previa or "", 0):
-                        fila["alarma"] = severidad
-                resumen.append({
-                    "id": al["id"],
-                    "nombre": al.get("nombre") or al["id"],
-                    "host": host,
-                    "identidad": eq_datos.get("identidad") or "",
-                    "interfaz": iface,
-                    "metrica": metrica,
-                    "operador": op,
-                    "umbral": umbral,
-                    "valor": valor,
-                    "severidad": severidad,
-                    "accion": accion,
-                    "estado": "activa" if est["activa"] else "ok",
-                    "desde": est.get("desde") or ahora,
-                    "duracion-s": dur,
-                    "limpiar-s": limpia,
-                })
-        if not coincidencias:
+                instancias.append((f"{host}|{iface}", valor, host, ident, iface,
+                                   [(host, ident, iface, fila)], alcance))
+
+        if not instancias:
             resumen.append({
                 "id": al["id"],
                 "nombre": al.get("nombre") or al["id"],
@@ -1365,6 +1316,87 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                 "accion": accion,
                 "estado": "sin-datos",
                 "desde": ahora,
+                "duracion-s": dur,
+                "limpiar-s": limpia,
+            })
+            continue
+
+        for (suf, valor, host, ident, iface, objetivos, _alcance) in instancias:
+            clave = f"{al['id']}|{suf}"
+            with _lock:
+                est = _estados.setdefault(clave, {
+                    "activa": False, "cond": None, "t": ahora,
+                    "valor": valor, "desde": ahora, "costos": [],
+                })
+            cumple = _cumple(valor, op, umbral)
+            if cumple != bool(est.get("cond")):
+                est["cond"] = cumple
+                est["t"] = ahora
+            est["valor"] = valor
+            etiqueta = iface if metrica != "red-bps" else f"total de red ({patron})"
+            quien = ident or host or "red"
+            if cumple and not est["activa"] and ahora - est["t"] >= dur:
+                est["activa"] = True
+                est["desde"] = ahora
+                mensaje = (f"{quien} {etiqueta}: "
+                           f"{metrica}={valor} {op} {umbral:g} ({severidad})")
+                accion_txt = ""
+                if accion == "automatica":
+                    if costo is not None:
+                        for (ohost, _oident, oiface, _ofila) in objetivos:
+                            efectos.append({
+                                "equipo": ohost, "interfaz": oiface,
+                                "costo": max(1, min(65535, costo)),
+                                "alarma": al["id"],
+                                "nombre": al.get("nombre") or al["id"],
+                            })
+                        accion_txt = f"costo {costo} al enlace (prioridad alarma)"
+                        mensaje += f" -> {accion_txt}"
+                    if cn is not None:
+                        with _lock:
+                            for (ohost, _oident, oiface, _ofila) in objetivos:
+                                for par in _extremos(topo, ohost, oiface):
+                                    _fallback[par] = {"costo": max(1, min(65535, cn)),
+                                                      "alarma": al["id"]}
+                eq_ev = host or (objetivos[0][0] if objetivos else "")
+                _nuevo_evento(tipo="activada", alarma=al["id"],
+                               nombre=al.get("nombre") or al["id"],
+                               severidad=severidad, equipo=eq_ev,
+                               identidad=ident, interfaz=iface, valor=valor,
+                               umbral=umbral, metrica=metrica, mensaje=mensaje,
+                               detalle=accion_txt)
+            elif not cumple and est["activa"] and ahora - est["t"] >= limpia:
+                est["activa"] = False
+                est["desde"] = ahora
+                mensaje = (f"{quien} {etiqueta}: "
+                           f"{metrica}={valor} recuperada")
+                if accion == "automatica":
+                    mensaje += " (vuelve a la regla de direccionamiento activa)"
+                est["costos"] = []
+                _nuevo_evento(tipo="desactivada", alarma=al["id"],
+                               nombre=al.get("nombre") or al["id"],
+                               severidad="ok", equipo=host, identidad=ident,
+                               interfaz=iface, valor=valor, umbral=umbral,
+                               metrica=metrica, mensaje=mensaje, detalle="")
+            if est["activa"]:
+                for (_h, _i, _if, fila) in objetivos:
+                    previa = fila.get("alarma")
+                    if orden_sev.get(severidad, 0) >= orden_sev.get(previa or "", 0):
+                        fila["alarma"] = severidad
+            resumen.append({
+                "id": al["id"],
+                "nombre": al.get("nombre") or al["id"],
+                "host": host,
+                "identidad": ident,
+                "interfaz": iface,
+                "metrica": metrica,
+                "operador": op,
+                "umbral": umbral,
+                "valor": valor,
+                "severidad": severidad,
+                "accion": accion,
+                "estado": "activa" if est["activa"] else "ok",
+                "desde": est.get("desde") or ahora,
                 "duracion-s": dur,
                 "limpiar-s": limpia,
             })
@@ -1385,6 +1417,7 @@ def poll(sesiones, hosts=None):
     Un candado propio evita que dos refrescos simultáneos (por ejemplo al
     reanudar la pestaña) lean y escriban el estado de las alarmas a la vez.
     """
+    global _efectos_activos
     with _poll_lock:
         recogidos, equipos = recoger(sesiones, hosts)
         topo = _armar_topologia(recogidos, sesiones) if recogidos else {"nodos": [], "enlaces": []}
@@ -1393,6 +1426,8 @@ def poll(sesiones, hosts=None):
             _topo.clear()
             _topo.update(topo)
         alarmas, efectos = _evaluar_alarmas(sesiones, topo, equipos, time.time())
+        with _lock:
+            _efectos_activos = efectos
         cambios = _reconciliar_costos(sesiones, topo, equipos, efectos)
         if cambios:
             topo = _armar_topologia(recogidos, sesiones) if recogidos else topo
@@ -1455,6 +1490,35 @@ def ultimo_poll():
     """Marca de tiempo del último ciclo completo (para el hilo de fondo)."""
     with _lock:
         return float(_topo.get("ts") or 0.0)
+
+
+def aplicar_regla_ahora(sesiones):
+    """Empuja ya el estado deseado usando la topología ya detectada.
+
+    Así, al cambiar de una regla a otra, los costos se aplican sin esperar al
+    próximo ciclo completo (que relee tráfico e interfaces de cada equipo)."""
+    if not sesiones:
+        return []
+    with _lock:
+        topo = {"ts": _topo.get("ts"),
+                "nodos": list(_topo.get("nodos") or []),
+                "enlaces": list(_topo.get("enlaces") or [])}
+        efectos = list(_efectos_activos)
+    if not topo.get("nodos") and not topo.get("enlaces"):
+        return []
+    equipos = []
+    vistos = set()
+    for n in topo.get("nodos", []):
+        h = n.get("host")
+        if h and h not in vistos:
+            vistos.add(h)
+            equipos.append({"host": h, "identidad": n.get("identidad") or ""})
+    for h in sesiones:
+        if h not in vistos:
+            vistos.add(h)
+            equipos.append({"host": h, "identidad": ""})
+    with _poll_lock:
+        return _reconciliar_costos(sesiones, topo, equipos, efectos)
 
 
 def metricas(sesiones, hosts=None):
