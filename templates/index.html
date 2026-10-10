@@ -1262,6 +1262,32 @@ function moniBps(n) {
   return n.toFixed(0) + " bps";
 }
 
+function moniBits(n, unidad) {
+  n = Number(n) || 0;
+  const u = String(unidad || "bps").toLowerCase();
+  if (u === "kbps" || u === "kb") return n * 1e3;
+  if (u === "mbps" || u === "mb") return n * 1e6;
+  if (u === "gbps" || u === "gb") return n * 1e9;
+  return n;
+}
+
+function moniBpsEnUnidad(n, unidad) {
+  n = Number(n) || 0;
+  const u = String(unidad || "bps").toLowerCase();
+  if (u === "kbps" || u === "kb") return n / 1e3;
+  if (u === "mbps" || u === "mb") return n / 1e6;
+  if (u === "gbps" || u === "gb") return n / 1e9;
+  return n;
+}
+
+function moniAutoUnidad(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return "gbps";
+  if (n >= 1e6) return "mbps";
+  if (n >= 1e3) return "kbps";
+  return "bps";
+}
+
 function moniPctBar(p, ancho) {
   p = Math.min(100, Math.max(0, Number(p) || 0));
   const cl = p >= 70 ? " rojo" : (p >= 40 ? " ambar" : "");
@@ -1698,6 +1724,27 @@ function moniAlarmasHTML() {
   let html = `<div class="moni-sub">Nueva regla</div>`;
   html += moniFormAlarmaHTML();
 
+  html += `<div class="moni-sub">Reglas configuradas (${reglas.length})</div>`;
+  if (!reglas.length) html += `<div class="banner-info">Todavía no hay reglas de alarma.</div>`;
+  else {
+    html += `<table><thead><tr><th>Nombre</th><th>Alcance</th><th>Condición</th><th>Severidad</th><th>Acción</th><th style="width:110px"></th></tr></thead><tbody>`;
+    for (const al of reglas) {
+      html += `<tr>
+        <td>${moniEsc(al.nombre || al.id)}${al.habilitada === false ? ' <span class="etq arn">desactivada</span>' : ""}</td>
+        <td>${moniEsc(al.equipo || "todos")} · ${moniEsc(al.interfaz || "*")}</td>
+        <td>${moniEsc(al.metrica)} ${moniEsc(al.operador)} ${al.metrica === "pct" ? Number(al.umbral).toFixed(1) + "%" : moniEsc(moniBps(al.umbral))} · dur ${Number(al["duracion-s"] || 0)}s</td>
+        <td><span class="etq ${moniEsc(al.severidad)}">${moniEsc(al.severidad)}</span></td>
+        <td>${moniAccionAlarma(al)}</td>
+        <td>
+          <button class="btn btn-dark" onclick="moniEditarAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Editar">✏️</button>
+          <button class="btn btn-amber" onclick="moniToggleAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Habilitar / deshabilitar">${al.habilitada === false ? "▶" : "⏸"}</button>
+          <button class="btn btn-red" onclick="moniBorrarAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Borrar">🗑</button>
+        </td>
+      </tr>`;
+    }
+    html += "</tbody></table>";
+  }
+
   html += `<div class="moni-sub">Monitoreo por interfaz (reglas evaluadas en el último ciclo)</div>`;
   if (!todas.length) html += `<div class="banner-info">No hay reglas activas/configuradas.</div>`;
   else {
@@ -1707,30 +1754,9 @@ function moniAlarmasHTML() {
         <td><b>${moniEsc(a.nombre || a.id)}</b> <span class="etq ${moniEsc(a.severidad)}">${moniEsc(a.severidad)}</span></td>
         <td>${moniEsc(a.identidad || a.host || "—")}</td>
         <td>${moniEsc(a.interfaz)}</td>
-        <td>${moniEsc(a.metrica)} ${moniEsc(a.operador)} ${moniEsc(a.umbral)}</td>
+        <td>${moniEsc(a.metrica)} ${moniEsc(a.operador)} ${a.metrica === "pct" ? Number(a.umbral).toFixed(1) + "%" : moniEsc(moniBps(a.umbral))}</td>
         <td>${a.valor === null || a.valor === undefined ? "—" : (a.metrica === "pct" ? Number(a.valor).toFixed(1) + "%" : moniBps(a.valor))}</td>
         <td>${moniEstadoAlarma(a)}</td>
-      </tr>`;
-    }
-    html += "</tbody></table>";
-  }
-
-  html += `<div class="moni-sub">Reglas configuradas (${reglas.length})</div>`;
-  if (!reglas.length) html += `<div class="banner-info">Todavía no hay reglas de alarma.</div>`;
-  else {
-    html += `<table><thead><tr><th>Nombre</th><th>Alcance</th><th>Condición</th><th>Severidad</th><th>Acción</th><th style="width:110px"></th></tr></thead><tbody>`;
-    for (const al of reglas) {
-      html += `<tr>
-        <td>${moniEsc(al.nombre || al.id)}${al.habilitada === false ? ' <span class="etq arn">desactivada</span>' : ""}</td>
-        <td>${moniEsc(al.equipo || "todos")} · ${moniEsc(al.interfaz || "*")}</td>
-        <td>${moniEsc(al.metrica)} ${moniEsc(al.operador)} ${moniEsc(al.umbral)} · dur ${Number(al["duracion-s"] || 0)}s</td>
-        <td><span class="etq ${moniEsc(al.severidad)}">${moniEsc(al.severidad)}</span></td>
-        <td>${moniAccionAlarma(al)}</td>
-        <td>
-          <button class="btn btn-dark" onclick="moniEditarAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Editar">✏️</button>
-          <button class="btn btn-amber" onclick="moniToggleAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Habilitar / deshabilitar">${al.habilitada === false ? "▶" : "⏸"}</button>
-          <button class="btn btn-red" onclick="moniBorrarAlarma(moniJsStr('${moniEsc(al.id)}'))" title="Borrar">🗑</button>
-        </td>
       </tr>`;
     }
     html += "</tbody></table>";
@@ -1767,6 +1793,10 @@ function moniFormAlarmaHTML() {
     `<button type="button" class="moni-pill${actual == null || actual === "" ? (v === primero ? " activa" : "") : (String(actual) === v ? " activa" : "")}" data-val="${moniEsc(v)}" onclick="marcarPill(this);moniFormTemp()">${moniEsc(txt)}</button>`;
   const pills = (id, lista, actual) => `<div class="moni-pills" id="${id}">${lista.map(v => pill(v, v, actual, lista[0])).join("")}</div>`;
   const c = (id, lbl, ex) => `<div class="moni-campo"><span class="moni-lbl">${lbl}</span>${ex}</div>`;
+  const umbralBps = Number(dflt("umbral", 200000)) || 0;
+  const esPct = dflt("metrica", "total-bps") === "pct";
+  const unidad = esPct ? "bps" : moniAutoUnidad(umbralBps);
+  const umbralVal = esPct ? umbralBps : Math.round(moniBpsEnUnidad(umbralBps, unidad) * 100) / 100;
   return `<div class="moni-sub">${al.id ? "Editar regla" : "Nueva regla"}</div>
   <div class="moni-fila-form">
     ${c("fa-nombre", "Nombre", `<input id="fa-nombre" class="largo" placeholder="p. ej. Congestión R1-R2" value="${moniEsc(al.nombre || "")}" oninput="moniFormTemp()">`)}
@@ -1774,7 +1804,16 @@ function moniFormAlarmaHTML() {
     ${c("fa-interfaz", "Interfaz (patrón)", `<input id="fa-interfaz" placeholder="ether3, ether*…" value="${moniEsc(al.interfaz || "*")}" oninput="moniFormTemp()">`)}
     ${c("fa-metrica", "Métrica", `${pills("fa-metrica", metricas, dflt("metrica", "total-bps"))}`)}
     ${c("fa-op", "Comparar", `${pills("fa-op", ops, dflt("operador", ">="))}`)}
-    ${c("fa-umbral", "Umbral (bps o %)", `<input id="fa-umbral" type="number" placeholder="50.000 = 50 kbps" value="${dflt("umbral", 200000)}" oninput="moniFormTemp()">`)}
+    ${c("fa-umbral", "Umbral", `<div style="display:flex;gap:6px;align-items:center">
+      <input id="fa-umbral" type="number" step="any" placeholder="p. ej. 50" value="${moniEsc(umbralVal)}" oninput="moniFormTemp()">
+      <select id="fa-umbral-unidad" onchange="moniFormTemp()"${esPct ? ' style="display:none"' : ""}>
+        <option value="bps"${unidad === "bps" ? " selected" : ""}>b/s</option>
+        <option value="kbps"${unidad === "kbps" ? " selected" : ""}>kb/s</option>
+        <option value="mbps"${unidad === "mbps" ? " selected" : ""}>Mb/s</option>
+        <option value="gbps"${unidad === "gbps" ? " selected" : ""}>Gb/s</option>
+      </select>
+      ${esPct ? '<span style="color:var(--text-muted)">%</span>' : ""}
+    </div>`)}
     ${c("fa-severidad", "Severidad", `${pills("fa-severidad", sevs, dflt("severidad", "alerta"))}`)}
     ${c("fa-duracion", "Duración (s)", `<input id="fa-duracion" type="number" min="0" placeholder="seg. sostenidos" value="${dflt("duracion-s", 2)}" oninput="moniFormTemp()">`)}
     ${c("fa-limpiar", "Limpiar (s)", `<input id="fa-limpiar" type="number" min="0" placeholder="seg. bajo el umbral" value="${dflt("limpiar-s", 5)}" oninput="moniFormTemp()">`)}
@@ -1804,6 +1843,15 @@ function marcarPill(btn) {
   g.querySelectorAll(".moni-pill").forEach(b => b.classList.toggle("activa", b === btn));
 }
 
+function moniUmbralDeFormulario(def) {
+  const raw = Number($("fa-umbral") ? $("fa-umbral").value : "");
+  if (!isFinite(raw) || raw === 0) return def;
+  const metrica = pillVal("fa-metrica") || "total-bps";
+  if (metrica === "pct") return raw;
+  const u = $("fa-umbral-unidad") ? $("fa-umbral-unidad").value : "bps";
+  return Math.round(moniBits(raw, u));
+}
+
 function moniFormTemp() {
   const v = id => ($(id) ? $(id).value : "");
   MONI.formTemp = {
@@ -1813,7 +1861,7 @@ function moniFormTemp() {
     interfaz: v("fa-interfaz").trim(),
     metrica: pillVal("fa-metrica") || "total-bps",
     operador: pillVal("fa-op") || ">=",
-    umbral: Number(v("fa-umbral")) || 200000,
+    umbral: moniUmbralDeFormulario(200000),
     severidad: pillVal("fa-severidad") || "alerta",
     "duracion-s": Number(v("fa-duracion")) || 2,
     "limpiar-s": Number(v("fa-limpiar")) || 5,
@@ -1833,7 +1881,7 @@ function moniGuardarAlarma() {
     interfaz: v("fa-interfaz").trim() || "*",
     metrica: pillVal("fa-metrica") || "total-bps",
     operador: pillVal("fa-op") || ">=",
-    umbral: Number(v("fa-umbral")) || 0,
+    umbral: moniUmbralDeFormulario(0),
     severidad: pillVal("fa-severidad") || "alerta",
     "duracion-s": Number(v("fa-duracion")) || 0,
     "limpiar-s": Number(v("fa-limpiar")) || 0,
