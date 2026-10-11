@@ -17,3 +17,7 @@ templates/*.before_revert*
 
 # Configuraciones/logs locales
 *.log
+
+# Exportaciones de configuración generadas por la app (config_<equipo>_<fecha>.yaml)
+config_*.yaml
+config_*.yml
