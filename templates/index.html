@@ -1614,6 +1614,81 @@ document.addEventListener("click", (ev) => {
   if (sel && !sel.contains(ev.target)) moniSelCerrar();
 });
 
+const MONI_DIAS_JS = ["dom", "lun", "mar", "mie", "jue", "vie", "sab"];
+function moniDiaHoy() { return MONI_DIAS_JS[new Date().getDay()]; }
+function moniSegHastaHHMM(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(hhmm || "").trim());
+  if (!m) return null;
+  const a = new Date();
+  const ahora = a.getHours() * 3600 + a.getMinutes() * 60 + a.getSeconds();
+  let seg = (parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60) - ahora;
+  if (seg < 0) seg += 86400;
+  return seg;
+}
+function moniFmtSeg(seg) {
+  seg = Math.max(0, Math.round(Number(seg) || 0));
+  const h = Math.floor(seg / 3600), mm = Math.floor((seg % 3600) / 60), ss = seg % 60;
+  const p = n => String(n).padStart(2, "0");
+  return (h ? h + ":" + p(mm) : p(mm)) + ":" + p(ss);
+}
+function moniNodoLbl(h) {
+  const n = (MONI.topo && MONI.topo.nodos || []).find(x => String(x.host) === String(h));
+  return n && n.id ? `${n.id} (${h})` : String(h);
+}
+function moniReglasActivasHTML() {
+  const reglas = (MONI.cfg || {}).direccionamiento || [];
+  const dir = MONI.dir || {};
+  const vig = dir.vigente;
+  const alarmas = (MONI.alarmas || []).filter(a => a.estado === "activa");
+  let html = `<div class="moni-sub" style="margin-top:10px">Reglas y alarmas activas</div>`;
+  if (vig) {
+    const r = reglas.find(x => String(x.id) === String(vig.id)) || {};
+    const camino = (dir.caminos && dir.caminos.length)
+      ? (dir.caminos[0].nodos || []).map(moniNodoLbl).join(" → ")
+      : (moniNodoLbl(r.origen || "?") + " → " + moniNodoLbl(r.destino || "?"));
+    html += `<div class="banner-info">Vigente: <b>${moniEsc(r.nombre || vig.nombre || vig.id)}</b> (${moniEsc(vig.modo)})</div>`;
+    html += `<div class="banner-info" style="font-family:Consolas,monospace">${moniEsc(camino)}</div>`;
+  } else {
+    html += `<div class="banner-info">Ninguna regla vigente ahora.</div>`;
+  }
+  const autos = reglas.filter(r => r.horario && r.habilitada !== false);
+  if (autos.length) {
+    const filas = autos.map(r => {
+      const esVig = !!vig && String(vig.id) === String(r.id);
+      const dias = (r.horario && r.horario.dias) || [];
+      let cr = "—", seg = 1e9;
+      if (esVig && r.horario.hasta) {
+        const s = moniSegHastaHHMM(r.horario.hasta);
+        if (s != null) { seg = s; cr = `<span class="etq" style="background:#0e7490;color:#e0f2fe">⏳ termina en ${moniFmtSeg(s)}</span>`; }
+      } else if (r.horario.desde && (!dias.length || dias.indexOf(moniDiaHoy()) >= 0)) {
+        const s = moniSegHastaHHMM(r.horario.desde);
+        if (s != null) { seg = s; cr = `<span class="etq" style="background:#3730a3;color:#e0e7ff">▶ empieza en ${moniFmtSeg(s)}</span>`; }
+      }
+      return { r, esVig, cr, seg };
+    }).sort((a, b) => (b.esVig - a.esVig) || (a.seg - b.seg));
+    html += `<div class="moni-sub" style="font-size:12px">Reglas automáticas (${autos.length})</div>`;
+    html += `<table><thead><tr><th>Regla</th><th>Franja</th><th>Estado</th><th>Cuenta regresiva</th></tr></thead><tbody>`;
+    for (const f of filas) {
+      const est = f.esVig ? `<span class="etq ok">vigente</span>` : `<span class="etq">programada</span>`;
+      html += `<tr>
+        <td><b>${moniEsc(f.r.nombre || f.r.id)}</b></td>
+        <td>${moniEsc(moniDirHorarioTxt(f.r))}</td>
+        <td>${est}</td>
+        <td>${f.cr}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  if (alarmas.length) {
+    html += `<div class="banner-info">Alarmas activas (${alarmas.length}): ` +
+      alarmas.map(a => `<span class="etq ${moniEsc(a.severidad || "info")}">${moniEsc(a.nombre || a.id)} · ${moniEsc(a.identidad || a.host || "")} ${moniEsc(a.interfaz || "")}</span>`).join(" ") +
+      `</div>`;
+  } else {
+    html += `<div class="banner-info">Sin alarmas activas.</div>`;
+  }
+  return html;
+}
+
 function moniTopologiaHTML() {
   const nodos = MONI.topo.nodos || [];
   const enlaces = MONI.topo.enlaces || [];
@@ -1748,7 +1823,8 @@ function moniTopologiaHTML() {
   <svg class="grafo" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
     ${lin}${flujo}${etiq}${nod}
   </svg>
-  ${detalle}`;
+  ${detalle}
+  ${moniReglasActivasHTML()}`;
 }
 
 function moniEnlaceDetalle(e) {
@@ -2541,7 +2617,7 @@ function moniDireccionamientoHTML() {
   if (apl.length) {
     html += `<table><thead><tr><th>Equipo</th><th>Interfaz</th><th>Costo aplicado</th><th>Origen</th></tr></thead><tbody>`;
     for (const a of apl) {
-      html += `<tr><td>${moniEsc(a.equipo)}</td><td><b>${moniEsc(a.interfaz)}</b></td><td>${a.costo}</td><td style="font-size:12px;color:var(--text-muted)">${moniEsc(a.origen || "—")}</td></tr>`;
+      html += `<tr><td>${moniEsc(moniNodoLbl(a.equipo))}</td><td><b>${moniEsc(a.interfaz)}</b></td><td>${a.costo}</td><td style="font-size:12px;color:var(--text-muted)">${moniEsc(a.origen || "—")}</td></tr>`;
     }
     html += "</tbody></table>";
   } else {
@@ -2552,7 +2628,7 @@ function moniDireccionamientoHTML() {
   if (cams.length) {
     html += `<div class="moni-sub">Camino(s) de la regla vigente (origen → destino)</div>`;
     for (const c of cams) {
-      html += `<div class="banner-info" style="font-family:Consolas,monospace">${c.nodos.map(n => moniEsc(n)).join(" → ")}</div>`;
+      html += `<div class="banner-info" style="font-family:Consolas,monospace">${c.nodos.map(n => moniEsc(moniNodoLbl(n))).join(" → ")}</div>`;
     }
   }
   const reglaVig = vig ? reglas.find(r => String(r.id) === String(vig.id)) : null;
