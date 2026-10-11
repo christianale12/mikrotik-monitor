@@ -1445,11 +1445,16 @@ function moniRender(force) {
   const foco = document.activeElement;
   const editando = foco && foco.tagName && /INPUT|SELECT|TEXTAREA|BUTTON/.test(foco.tagName) && cuerpo.contains(foco);
   // Mientras se arma/edita una regla, NO hay que rehacer la pestaña en cada
-  // sondeo: si no, se borra lo tipeado y se reemplaza el mapa en medio de un
-  // clic (por eso "a veces funcionaba"). Se persiste el borrador en moniDirTemp.
-  const ed = MONI.editRegla;
-  const editandoDir = MONI.tab === "direccionamiento" && (MONI.grafoFull ||
-    !!(ed && (ed.id || ed.nombre || ed.origen || ed.destino || (ed.entradas || []).length)));
+  // sondeo: si no, se borra lo tipeado —incluido el horario— y se reemplaza el
+  // mapa en medio de un clic. El borrador se persiste en MONI.editRegla
+  // (moniDirTemp). Ojo: contar también modo/desde/hasta, porque se puede estar
+  // configurando SOLO un horario (modo automático) sin nombre/origen/camino.
+  // Si NO se está editando (mirando una regla), sí conviene refrescar en cada
+  // sondeo para que el estado (vigente/aplicado) y el mapa vuelvan a "normal"
+  // cuando termina la franja horaria.
+  const edDir = MONI.editRegla || {};
+  const editandoDir = MONI.tab === "direccionamiento" &&
+    (MONI.grafoFull || Object.keys(edDir).length > 0);
   if ((editando || editandoDir) && !force) { moniBadges(); return; }
   try {
     if (MONI.tab === "trafico") cuerpo.innerHTML = moniTraficoHTML();
@@ -2186,6 +2191,7 @@ function moniDirLeerEntradas() {
 function moniDirTemp() {
   const d = MONI.editRegla || (MONI.editRegla = {});
   const val = id => ($(id) ? $(id).value : "");
+  if ($("dir-modo")) d.modo = $("dir-modo").value;
   if ($("dir-nombre")) d.nombre = val("dir-nombre");
   if ($("dir-origen")) d.origen = val("dir-origen");
   if ($("dir-destino")) d.destino = val("dir-destino");
@@ -2193,9 +2199,24 @@ function moniDirTemp() {
   if ($("dir-costo-camino")) d["costo-camino"] = val("dir-costo-camino");
   if ($("dir-costo-evitar")) d["costo-evitar"] = val("dir-costo-evitar");
   const desde = val("dir-desde"), hasta = val("dir-hasta");
+  d.dias = moniDiasSeleccionados();
+  d.desde = desde; d.hasta = hasta;
   if ($("dir-desde") || $("dir-hasta")) {
-    d.horario = (desde && hasta) ? { desde, hasta, dias: moniDiasSeleccionados() } : null;
+    d.horario = (desde && hasta) ? { desde, hasta, dias: d.dias } : null;
   }
+}
+
+/* Actualiza el aviso del modo y la etiqueta del horario sin reconstruir el
+   formulario (así no se pierde lo tipeado). */
+function moniModoAviso() {
+  moniDirTemp();
+  const esAuto = ($("dir-modo") || {}).value === "auto";
+  const av = $("dir-modo-aviso");
+  if (av) av.textContent = esAuto
+    ? "⏰ Automático: la regla se aplica sola durante su franja horaria (y durante la franja tiene prioridad sobre una regla manual)."
+    : "🖐 Manual: la regla se aplica cuando tocás ▶ Aplicar en la lista de abajo.";
+  const lbl = $("dir-desde-lbl");
+  if (lbl) lbl.textContent = esAuto ? "" : " (solo modo automático)";
 }
 
 /* --- Mini-grafo para armar el camino de la regla con clics --- */
@@ -2503,10 +2524,15 @@ function moniDireccionamientoHTML() {
   // Si no estamos editando, el mapa muestra el camino de la regla elegida
   // (la clickeada para mirar, o si no la vigente). Así clickear una regla
   // pinta su recorrido sin tener que entrar a editar.
-  if (!MONI.editRegla && (!MONI.camino || !MONI.camino.nodos.length)) {
+  if (!MONI.editRegla) {
+    // Al no estar editando, el mapa siempre refleja la regla visible (la que se
+    // está mirando o la vigente). Si no hay ninguna, se limpia el camino para
+    // que el gráfico vuelva a "normal" en cuanto termina la franja horaria.
     const rv = moniReglaVisible();
     if (rv) moniReconstruirCamino(rv);
+    else MONI.camino = { nodos: [], aristas: [] };
   }
+  const rvis = moniReglaVisible() || {};
   let html = `<div class="moni-sub">Estado</div>`;
   html += vig
     ? `<div class="banner-info">Regla vigente: <b>${moniEsc(vig.nombre)}</b> (${moniEsc(vig.modo)}) — los costos OSPF los manda esta regla salvo que una alarma los sobreescriba.</div>`
@@ -2532,16 +2558,23 @@ function moniDireccionamientoHTML() {
   const reglaVig = vig ? reglas.find(r => String(r.id) === String(vig.id)) : null;
   html += moniReglaAviso(reglaVig);
 
+  const modoActual = ed.modo || (ed.horario ? "auto" : "manual");
+  const esAuto = modoActual === "auto";
   html += `<div class="moni-sub">${ed.id ? "Editar regla" : "Nueva regla de direccionamiento"}</div>`;
   html += `<div class="moni-fila-form">
+    <div class="moni-campo"><span class="moni-lbl">Modo</span><select id="dir-modo" onchange="moniModoAviso()">
+      <option value="manual"${esAuto ? "" : " selected"}>Manual (activo con ▶ Aplicar)</option>
+      <option value="auto"${esAuto ? " selected" : ""}>Automático (por horario)</option>
+    </select></div>
     <div class="moni-campo"><span class="moni-lbl">Nombre</span><input id="dir-nombre" class="largo" placeholder="p. ej. trafico-mañana" value="${moniEsc(ed.nombre || "")}" oninput="moniDirTemp()"></div>
     <div class="moni-campo"><span class="moni-lbl">Origen (para mostrar el camino)</span><input id="dir-origen" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.origen || "")}" oninput="moniDirTemp()"></div>
     <div class="moni-campo"><span class="moni-lbl">Destino</span><input id="dir-destino" placeholder="IP o identidad" list="dir-hosts" value="${moniEsc(ed.destino || "")}" oninput="moniDirTemp()"></div>
-    <div class="moni-campo"><span class="moni-lbl">Horario desde (opcional)</span><input id="dir-desde" type="time" value="${moniEsc(ed.horario ? ed.horario.desde : "")}" oninput="moniDirTemp()"></div>
-    <div class="moni-campo"><span class="moni-lbl">Horario hasta</span><input id="dir-hasta" type="time" value="${moniEsc(ed.horario ? ed.horario.hasta : "")}" oninput="moniDirTemp()"></div>
-    <div class="moni-campo"><span class="moni-lbl">Días (vacío = todos)</span><div style="display:flex;gap:8px;flex-wrap:wrap">${["lun","mar","mie","jue","vie","sab","dom"].map(d => `<label class="chk"><input type="checkbox" class="dir-dia" value="${d}" ${ed.horario && (ed.horario.dias || []).indexOf(d) >= 0 ? "checked" : ""} onchange="moniDirTemp()"> ${d}</label>`).join("")}</div></div>
+    <div class="moni-campo"><span class="moni-lbl">Horario desde<span id="dir-desde-lbl">${esAuto ? "" : " (solo modo automático)"}</span></span><input id="dir-desde" type="text" inputmode="numeric" placeholder="HH:MM (ej. 08:00)" value="${moniEsc(ed.horario ? ed.horario.desde : (ed.desde || ""))}" oninput="moniDirTemp()" onchange="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Horario hasta</span><input id="dir-hasta" type="text" inputmode="numeric" placeholder="HH:MM (ej. 20:00)" value="${moniEsc(ed.horario ? ed.horario.hasta : (ed.hasta || ""))}" oninput="moniDirTemp()" onchange="moniDirTemp()"></div>
+    <div class="moni-campo"><span class="moni-lbl">Días (vacío = todos)</span><div style="display:flex;gap:8px;flex-wrap:wrap">${["lun","mar","mie","jue","vie","sab","dom"].map(d => `<label class="chk"><input type="checkbox" class="dir-dia" value="${d}" ${((ed.horario && ed.horario.dias) || ed.dias || []).indexOf(d) >= 0 ? "checked" : ""} onchange="moniDirTemp()"> ${d}</label>`).join("")}</div></div>
     <div class="moni-campo chk-campo"><span class="moni-lbl">Estado</span><label class="chk"><input type="checkbox" id="dir-habilitada" ${ed.habilitada === false ? "" : "checked"} onchange="moniDirTemp()"> habilitada</label></div>
   </div>
+  <div class="banner-info" id="dir-modo-aviso" style="margin:4px 0">${esAuto ? "⏰ Automático: la regla se aplica sola durante su franja horaria (y durante la franja tiene prioridad sobre una regla manual)." : "🖐 Manual: la regla se aplica cuando tocás ▶ Aplicar en la lista de abajo."}</div>
   <div class="moni-sub" style="margin-top:8px">1) Armá el camino con clics en el mapa</div>
   <div style="font-size:12px;color:var(--text-muted)">Clic en un router para empezar y luego clic en cada enlace hasta completar el camino. Cada nodo muestra el <b>nombre del router</b> (grande) y su IP (chico). Los elegidos se marcan en <span style="color:${COL_DIR_D}">celeste</span>. Usá <b>⛶ Ampliar mapa</b> si querés verlo más grande y <b>🚫 Forzar este camino</b> para que OSPF tenga que ir por acá.</div>
   <div style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap">
@@ -2555,7 +2588,7 @@ function moniDireccionamientoHTML() {
     <button class="btn btn-dark" onclick="MONI.grafoFull=true;moniCaminoRefrescar()">⛶ Ampliar mapa</button>
     <span id="dir-camino-resumen" style="font-family:Consolas,monospace;font-size:12px;color:${COL_DIR_D}"></span>
   </div>
-  <div class="banner-info" style="margin:4px 0">Mostrando el camino de: <b>${moniEsc((moniReglaVisible() || {}).nombre || (moniReglaVisible() || {}).id || "—")}</b>${MONI.editRegla ? " (editando)" : (MONI.reglaVer ? "" : " (regla vigente)")}. Clic en una regla de la lista para ver su recorrido.</div>
+  <div class="banner-info" style="margin:4px 0">Mostrando el camino de: <b>${moniEsc(rvis.nombre || rvis.id || "—")}</b>${rvis.horario ? ` — ⏰ ${moniDirHorarioTxt(rvis)}` : (rvis.modo === "auto" ? " — ⏰ sin franja" : " — 🖐 manual")}${MONI.editRegla ? " (editando)" : (MONI.reglaVer ? "" : " (regla vigente)")}. Clic en una regla de la lista para ver su recorrido.</div>
   <div id="dir-grafo">${moniGrafoSVG()}</div>
   <div class="moni-sub" style="margin-top:8px">2) Costos de la regla (equipo · interfaz · costo)</div>
   <datalist id="dir-hosts">${moniDirHostsOpts()}</datalist>
@@ -2575,11 +2608,11 @@ function moniDireccionamientoHTML() {
       const esVig = vig && String(vig.id) === String(r.id);
       const esManual = String(activa) === String(r.id);
       const esVer = String(MONI.reglaVer || "") === String(r.id);
-      let etq = "";
+      const esAuto = (r.modo === "auto") || !!r.horario;
+      let etq = esAuto ? `<span class="etq">⏰ automático</span> ` : `<span class="etq">🖐 manual</span> `;
       if (esVig) etq += `<span class="etq ok">vigente (${moniEsc(vig.modo)})</span> `;
-      else if (esManual) etq += `<span class="etq arn">manual</span> `;
+      else if (esManual) etq += `<span class="etq arn">elegida a mano</span> `;
       if (r.habilitada === false) etq += `<span class="etq down">deshabilitada</span>`;
-      if (!etq) etq = `<span class="etq">—</span>`;
       const est = esVer ? ' style="outline:1px solid #22d3ee;outline-offset:-1px"' : "";
       html += `<tr${est}>
         <td style="cursor:pointer" onclick="moniVerRegla(moniJsStr('${moniEsc(r.id)}'))" title="Ver el camino de esta regla en el mapa"><b>${moniEsc(r.nombre || r.id)}</b></td>
@@ -2589,7 +2622,7 @@ function moniDireccionamientoHTML() {
         <td>${etq}</td>
         <td>
           <button class="btn ${esVer ? "btn-ospf" : "btn-dark"}" onclick="moniVerRegla(moniJsStr('${moniEsc(r.id)}'))" title="Ver el camino de esta regla en el mapa">${esVer ? "👁 Viendo" : "👁 Ver"}</button>
-          <button class="btn btn-ospf" onclick="moniAplicarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Aplicar esta regla ahora">▶ Aplicar</button>
+          ${esAuto ? "" : `<button class="btn btn-ospf" onclick="moniAplicarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Aplicar esta regla ahora (manual)">▶ Aplicar</button>`}
           <button class="btn btn-dark" onclick="moniEditarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Editar">✏️</button>
           <button class="btn btn-amber" onclick="moniToggleRegla(moniJsStr('${moniEsc(r.id)}'))" title="Habilitar / deshabilitar">${r.habilitada === false ? "▶" : "⏸"}</button>
           <button class="btn btn-red" onclick="moniBorrarRegla(moniJsStr('${moniEsc(r.id)}'))" title="Borrar">🗑</button>
@@ -2609,22 +2642,42 @@ function moniDiasSeleccionados() {
   return [...document.querySelectorAll(".dir-dia:checked")].map(c => c.value);
 }
 
+function moniNormHora(s) {
+  s = String(s || "").trim().replace(/[.,]/g, ":");
+  const m = s.match(/^(\d{1,2})\s*[:hH]?\s*(\d{1,2})?$/);
+  if (!m) return "";
+  const h = parseInt(m[1], 10);
+  const mi = m[2] != null ? parseInt(m[2], 10) : 0;
+  if (isNaN(h) || h > 23 || isNaN(mi) || mi > 59) return "";
+  return ("0" + h).slice(-2) + ":" + ("0" + mi).slice(-2);
+}
+
 function moniGuardarRegla() {
   const v = id => ($(id) ? $(id).value : "");
-  const desde = v("dir-desde").trim();
-  const hasta = v("dir-hasta").trim();
+  const draft = MONI.editRegla || {};
+  // El horario se escribe como texto HH:MM (el control nativo fallaba en WebKit).
+  const desde = moniNormHora(v("dir-desde") || draft.desde);
+  const hasta = moniNormHora(v("dir-hasta") || draft.hasta);
   const entradas = moniDirLeerEntradas();
   if (!entradas.length) {
     moniToast({ titulo: "Sin entradas", texto: "Agregá al menos un equipo/interfaz con costo.", sev: "info" });
     return;
   }
+  const modo = v("dir-modo") || draft.modo || "manual";
+  if (modo === "auto" && (!desde || !hasta)) {
+    moniToast({ titulo: "Falta la franja horaria", texto: "Escribí 'Horario desde' y 'Horario hasta' como HH:MM (ej. 08:00 y 20:00).", sev: "info" });
+    return;
+  }
+  const diasSel = moniDiasSeleccionados();
+  const dias = diasSel.length ? diasSel : (draft.dias || []);
   const regla = {
     id: (MONI.editRegla && MONI.editRegla.id) || ("dir-" + Date.now().toString(36)),
     nombre: v("dir-nombre").trim() || "Regla",
     origen: v("dir-origen").trim(),
     destino: v("dir-destino").trim(),
     habilitada: $("dir-habilitada") ? $("dir-habilitada").checked : true,
-    horario: (desde && hasta) ? { desde, hasta, dias: moniDiasSeleccionados() } : null,
+    modo,
+    horario: modo === "auto" ? { desde, hasta, dias } : null,
     entradas,
   };
   const lista = (MONI.cfg.direccionamiento || []).filter(r => String(r.id) !== String(regla.id));

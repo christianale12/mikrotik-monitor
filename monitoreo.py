@@ -35,6 +35,7 @@ SATURADO_PCT_DEFECTO = 80
 OLVIDO_TOPO = 120.0
 MUESTRA_VIEJA = 60.0
 TOPO_TTL = 4.0
+ANTICIPO_RECONVERGENCIA = 30.0  # seg. de adelanto con que se aplica una franja, para que OSPF ya haya convergido al comenzar
 METRICAS = ("rx-bps", "tx-bps", "total-bps", "red-bps", "pct")
 OPERADORES = (">", ">=", "<", "<=", "==", "!=")
 
@@ -345,28 +346,58 @@ def _horario_cumple(horario, ahora_epoch=None):
     return ahora_min >= desde or ahora_min < hasta
 
 
-def regla_vigente(ahora_epoch=None):
+def _horario_por_comenzar(horario, ahora_epoch=None, anticipo_s=0.0):
+    """True si la franja arranca dentro de los próximos `anticipo_s` segundos.
+
+    Se usa para aplicar la regla un poco antes de tiempo, así OSPF ya terminó
+    de reconverger cuando la franja empieza de verdad.
+    """
+    if not horario or anticipo_s <= 0:
+        return False
+    desde = _minutos(horario.get("desde"))
+    if desde is None:
+        return False
+    lt = time.localtime(ahora_epoch if ahora_epoch is not None else time.time())
+    dias = horario.get("dias") or []
+    if dias and DIAS[lt.tm_wday] not in dias:
+        return False
+    seg_dia = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec
+    falta = desde * 60 - seg_dia
+    if falta < 0:
+        falta += 86400
+    return 0 < falta <= anticipo_s
+
+
+def regla_vigente(ahora_epoch=None, anticipo=0.0):
     """Regla que debe estar aplicada ahora.
 
-    Prioridad: la activada a mano (regla-activa) gana mientras esté puesta y
-    habilitada; si no hay ninguna manual, manda la primera que cumpla su
-    horario. Así activar una regla cambia de inmediato y no se "pelean" dos
-    reglas por ver quién gana.
+    Prioridad: manda la primera regla habilitada cuyo horario cumpla AHORA
+    (modo 'horario', automático). Si ninguna franja está activa, recién ahí
+    se usa la activada a mano (regla-activa, modo 'manual'). Así una regla con
+    horario actúa sola durante su franja y no queda tapada por una manual.
 
-    Devuelve (regla|None, modo) con modo en {'manual', 'horario', None}.
+    Devuelve (regla|None, modo) con modo en {'horario', 'manual', None}.
     """
     with _lock:
         reglas = [dict(r) for r in (_config.get("direccionamiento") or [])]
         activa = _config.get("regla-activa")
-    if activa:
-        for r in reglas:
-            if r.get("habilitada", True) and str(r.get("id")) == str(activa):
-                return r, "manual"
     for r in reglas:
         if not r.get("habilitada", True):
             continue
         if _horario_cumple(r.get("horario"), ahora_epoch):
             return r, "horario"
+    if anticipo:
+        # Pre-aplicar la franja que está por comenzar, SOLO si ninguna otra
+        # está vigente ahora mismo (así no pisa una franja en curso).
+        for r in reglas:
+            if not r.get("habilitada", True):
+                continue
+            if _horario_por_comenzar(r.get("horario"), ahora_epoch, anticipo):
+                return r, "horario"
+    if activa:
+        for r in reglas:
+            if r.get("habilitada", True) and str(r.get("id")) == str(activa):
+                return r, "manual"
     return None, None
 
 
@@ -377,7 +408,7 @@ def caminos_vigentes(sesiones, topo=None):
             topo = topologia(sesiones)
         except Exception:  # noqa: BLE001
             topo = {"nodos": [], "enlaces": []}
-    regla, _modo = regla_vigente()
+    regla, _modo = regla_vigente(anticipo=ANTICIPO_RECONVERGENCIA)
     try:
         return _caminos_regla(topo, sesiones, regla)
     except Exception:  # noqa: BLE001
@@ -386,7 +417,7 @@ def caminos_vigentes(sesiones, topo=None):
 
 def estado_direccionamiento(ahora_epoch=None):
     """Regla vigente y costos que el motor tiene aplicados ahora mismo."""
-    regla, modo = regla_vigente(ahora_epoch)
+    regla, modo = regla_vigente(ahora_epoch, anticipo=ANTICIPO_RECONVERGENCIA)
     with _lock:
         aplicado = [{"equipo": h, "interfaz": i, "costo": v.get("costo"),
                      "origen": v.get("origen") or ""}
@@ -1172,7 +1203,7 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
     """
     deseado = {}   # (host, iface) -> costo
     origen = {}    # (host, iface) -> etiqueta de dónde sale el costo
-    regla, modo = regla_vigente()
+    regla, modo = regla_vigente(anticipo=ANTICIPO_RECONVERGENCIA)
     if regla is not None:
         etq = f"regla {(regla.get('nombre') or regla.get('id'))}"
         for ent in regla.get("entradas") or []:
@@ -1435,7 +1466,7 @@ def poll(sesiones, hosts=None):
             with _lock:
                 _topo.clear()
                 _topo.update(topo)
-        regla_vig, _modo = regla_vigente()
+        regla_vig, _modo = regla_vigente(anticipo=ANTICIPO_RECONVERGENCIA)
         dir_estado = estado_direccionamiento()
         dir_estado["caminos"] = _caminos_regla(topo, sesiones, regla_vig)
         with _lock:
