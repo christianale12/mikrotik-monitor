@@ -1011,10 +1011,11 @@ async function exportarYAML(completa) {
     setError("No seleccionaste ningún bloque para guardar.");
     return;
   }
+  const host = equipoActivo();
   const resp = await fetch("/api/exportar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(completa ? { completa: true } : { secciones }),
+    body: JSON.stringify(completa ? { completa: true, host } : { secciones, host }),
   });
   const data = await resp.json();
   if (!data.ok) { setError(data.error); return; }
@@ -1062,7 +1063,7 @@ async function restaurarDesdeYAML() {
   const resp = await fetch("/api/restaurar_completa", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ yaml: res.yaml, "solo_analizar": true }),
+    body: JSON.stringify({ yaml: res.yaml, "solo_analizar": true, host: equipoActivo() }),
   });
   const data = await resp.json();
   if (!data.ok) {
@@ -1096,7 +1097,7 @@ async function confirmarRestaurarTodo() {
   const resp = await fetch("/api/restaurar_completa", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ yaml, "solo_analizar": false }),
+    body: JSON.stringify({ yaml, "solo_analizar": false, host: equipoActivo() }),
   });
   const data = await resp.json();
   if (data.ok === false && data.error) {
@@ -1253,7 +1254,7 @@ async function confirmarRestaurar() {
   const resp = await fetch("/api/restaurar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rutas, yaml_a, yaml_b }),
+    body: JSON.stringify({ rutas, yaml_a, yaml_b, host: equipoActivo() }),
   });
   const data = await resp.json();
   btn.disabled = false;
