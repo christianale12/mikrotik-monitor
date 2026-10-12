@@ -2,17 +2,284 @@ capacidad-default: 500000
 saturado-pct: 70
 capacidades: {}
 alarmas:
-- id: al-mv0k8qul
-  nombre: Congestion OSPF (prueba)
-  equipo: ''
-  interfaz: ether[2-9]
-  metrica: pct
-  operador: '>='
-  umbral: 70.0
-  severidad: critico
-  duracion-s: 2
-  limpiar-s: 10
-  accion: automatica
-  costo: 30
+- accion: automatica
+  costo: 100
   costo-normal: null
+  duracion-s: 1
+  equipo: ''
+  habilitada: false
+  id: al-mv2yucno
+  interfaz: ether[2-9]
+  limpiar-s: 5
+  metrica: red-bps
+  nombre: correccion-critica
+  operador: '>='
+  severidad: critico
+  umbral: 16200000.0
+- accion: automatica
+  costo: 100
+  costo-normal: null
+  duracion-s: 2
+  equipo: ''
   habilitada: true
+  id: al-mv32bs99
+  interfaz: '*ether[2-9]'
+  limpiar-s: 5
+  metrica: red-bps
+  nombre: Regla
+  operador: '>='
+  severidad: critico
+  umbral: 8100000.0
+regla-activa: dir-mv4l6c0p
+direccionamiento:
+- destino: 192.168.122.129
+  entradas:
+  - equipo: 192.168.122.237
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.4
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.3
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.253
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  habilitada: true
+  horario:
+    desde: '23:15'
+    hasta: '23:19'
+    dias: []
+  id: dir-r9-1
+  modo: auto
+  nombre: R9 via R4-R7
+  origen: 192.168.122.237
+- destino: 192.168.122.129
+  entradas:
+  - equipo: 192.168.122.237
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.4
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.111
+    interfaz: ether5
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.248
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  habilitada: true
+  horario:
+    desde: '23:19'
+    hasta: '23:23'
+    dias: []
+  id: dir-r9-2
+  modo: auto
+  nombre: R9 via R5-R8
+  origen: 192.168.122.237
+- destino: 192.168.122.129
+  entradas:
+  - equipo: 192.168.122.237
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.234
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.176
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.248
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  habilitada: true
+  horario:
+    desde: '23:23'
+    hasta: '23:26'
+    dias: []
+  id: dir-r9-3
+  modo: auto
+  nombre: R9 via R6-R8
+  origen: 192.168.122.237
+- destino: 192.168.122.4
+  entradas:
+  - equipo: 192.168.122.129
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.248
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.111
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.234
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.237
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  habilitada: true
+  horario: null
+  id: dir-mv386kfg
+  modo: manual
+  nombre: Regla
+  origen: 192.168.122.129
+- destino: 192.168.122.239
+  entradas:
+  - equipo: 192.168.122.249
+    interfaz: ether2
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.9
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.200
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.10
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  habilitada: true
+  horario: null
+  id: dir-mv4l4qql
+  modo: manual
+  nombre: Regla
+  origen: 192.168.122.249
+- id: dir-mv4l6c0p
+  nombre: Regla
+  origen: 192.168.122.249
+  destino: 192.168.122.239
+  habilitada: true
+  modo: manual
+  horario: null
+  entradas:
+  - equipo: 192.168.122.249
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.33
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.94
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.105
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+aplicado:
+- equipo: 192.168.122.129
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.111
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.234
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.237
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.248
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.237
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.4
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.234
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.19
+  interfaz: ether5
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.239
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.33
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.33
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.105
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.105
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.249
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.94
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.94
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla

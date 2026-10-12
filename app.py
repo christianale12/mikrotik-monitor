@@ -304,7 +304,8 @@ def _aplicar_topo(datos, aplicar):
         return {"ok": False, "error": err}
 
     area = str(topo.get("area") or "0.0.0.0")
-    redistribute = bool(topo.get("redistribute-connected", True))
+    _r = topo.get("redistribute-connected", False)
+    redistribute = _r if isinstance(_r, bool) else str(_r).strip().lower() in ("1", "true", "yes", "on")
 
     solo = datos.get("equipos")
     if isinstance(solo, str):
@@ -393,6 +394,47 @@ def ospf_interfaces():
                                  area=area)
 
     return jsonify(_aplicar_topo(datos, _aplicar))
+
+
+@app.route("/api/ospf_generar", methods=["POST"])
+def ospf_generar():
+    """Arma el inventario OSPF (ospf.yml) solo, leyendo la topología por MNDP.
+
+    Recorre los equipos (los pedidos en 'equipos'/'hosts' o, si no hay,
+    los que aparezcan escaneando la red), deduce por vecinos MNDP quién
+    está cableado con quién, numera R1..Rn, fija identidad (R<n>) y clave
+    si se pide, y devuelve el YAML listo para el paso 1.
+    """
+    datos = _datos_request()
+    usuario = (datos.get("usuario") or "admin").strip()
+    password = datos.get("password")
+    password = "123" if password is None else str(password)
+    identidad_pedida = datos.get("identidad")
+    fijar = True if identidad_pedida is None else bool(identidad_pedida)
+    clave_pedida = datos.get("clave")
+    clave = password if clave_pedida is None and fijar else clave_pedida
+
+    hosts = _lista_hosts(datos)
+    if not hosts:
+        if SESIONES:
+            hosts = list(SESIONES)
+        else:
+            try:
+                hosts, _redes, _ip = tm.detectar_mikrotiks(timeout=0.5)
+            except tm.ErrorMikroTik as e:
+                return jsonify({"ok": False, "error": str(e)})
+    if not hosts:
+        return jsonify({"ok": False, "error": "No se encontró ningún MikroTik en la red."})
+
+    try:
+        res = tm.generar_inventario_ospf(
+            hosts, usuario=usuario, password=password,
+            fijar_identidad=fijar, forzar_identidad=fijar, fijar_clave=clave)
+    except tm.ErrorMikroTik as e:
+        return jsonify({"ok": False, "error": str(e)})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(e)})
+    return jsonify({"ok": True, "escaneados": hosts, **res})
 
 
 @app.route("/api/datos", methods=["POST"])

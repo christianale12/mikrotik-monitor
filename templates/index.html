@@ -309,7 +309,9 @@
   .etq.ok { background: rgba(16, 185, 129, 0.15); color: #34d399; }
   .etq.down { background: rgba(239, 68, 68, 0.25); color: #fca5a5; }
 
-  .grafo { width: 100%; background: radial-gradient(circle at 50% 40%, #0d1526 0%, #070c17 100%); border: 1px solid var(--panel-border); border-radius: 8px; }
+  .grafo { width: 100%; background: radial-gradient(circle at 50% 40%, #0d1526 0%, #070c17 100%); border: 1px solid var(--panel-border); border-radius: 8px; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .grafo .nodo-g { cursor: grab; }
+  .grafo .nodo-g:active { cursor: grabbing; }
   .grafo .linea { stroke-linecap: round; }
   .grafo .linea-hit { stroke: transparent; }
   .grafo .nodo-etiqueta { font-size: 13px; font-weight: 800; fill: #e2e8f0; text-anchor: middle; }
@@ -467,7 +469,8 @@
           <button class="btn btn-green" onclick="exportarYAMLCompleta()" title="Guarda TODOS los bloques (incluye servidores/redes DHCP y lo que no esté marcado)">🗂 Guardar configuración completa</button>
           <button class="btn btn-dark" onclick="compararYAMLs()">🔁 Comparar dos configuraciones</button>
           <button class="btn btn-amber" onclick="restaurarDesdeYAML()" title="Carga un YAML guardado y devuelve el equipo a esa configuración completa">⬆️ Restaurar desde YAML</button>
-          <button class="btn btn-ospf" onclick="levantarPaso(1)" title="Paso 1: toma el YAML de topología (ospf.yml) y levanta OSPF en todos los equipos (loopback, instancia, redes)">🚀 1) Levantar OSPF desde YAML</button>
+          <button class="btn btn-blue" onclick="generarInventario()" title="Detecta solo la topología por MNDP, numera los routers (R1..Rn), fija identidad y arma el inventario OSPF sin cargar equipos ni redes a mano">🧩 Generar ospf.yml (auto)</button>
+          <button class="btn btn-ospf" onclick="levantarPaso(1)" title="Paso 1: usa el YAML generado (o elige ospf.yml) y levanta OSPF en todos los equipos (loopback, instancia, redes)">🚀 1) Levantar OSPF desde YAML</button>
           <button class="btn btn-ospf" onclick="levantarPaso(2)" title="Paso 2: en cada equipo mira qué vecino hay en cada interfaz y pone la IP /30 que le corresponde (sin límite de placas ni de routers). Re-ejecutar resincroniza si cambiaste cables o placas">🔌 2) Levantar interfaces (según cables)</button>
         </div>
         <div class="opciones-yaml">
@@ -932,17 +935,62 @@ function traficoHTML(interfaces) {
   return html;
 }
 
+async function generarInventario() {
+  const r = $("resultado");
+  r.innerHTML = `<div class="cargando">Escaneando la red y armando el inventario OSPF por MNDP...</div>`;
+  let data;
+  try {
+    const resp = await fetch("/api/ospf_generar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    data = await resp.json();
+  } catch (e) { setError("No se pudo generar: " + e); return; }
+  if (!data.ok) { setError(data.error || "No se pudo generar el inventario."); return; }
+
+  window.__yamlGenerado = data.yaml;
+  const total = (data.equipos || []).length;
+  const nEnl = (data.enlaces || []).length;
+  let html = `<div class="banner-ok">✅ Inventario generado: ${total} equipo(s), ${nEnl} enlace(s) detectado(s) por MNDP.</div>`;
+  (data.equipos || []).forEach(e => {
+    html += `<div class="banner-info">R${e.numero} · ${e.host} · ident=${e.identidad || "-"} · router-id=${e["router-id"]} · ${(e.networks || []).join(", ")}</div>`;
+  });
+  (data.mensajes || []).forEach(m => { html += `<div class="banner-info">${m}</div>`; });
+  html += `<div class="preview-cab">
+      <b>Vista previa — ospf.yml (auto)</b>
+      <button class="btn btn-green" onclick="guardarYamlGenerado()">💾 Guardar</button>
+    </div>
+    <pre class="preview-yml"></pre>
+    <div class="acciones-sesion" style="margin-top:8px;">
+      <button class="btn btn-ospf" onclick="levantarPaso(1)">🚀 1) Levantar OSPF con este YAML</button>
+      <button class="btn btn-ospf" onclick="levantarPaso(2)">🔌 2) Levantar interfaces</button>
+    </div>`;
+  r.innerHTML = html;
+  r.querySelector(".preview-yml").textContent = data.yaml;
+  await cargarEquipos();
+}
+
+function guardarYamlGenerado() {
+  if (!window.__yamlGenerado) { setError("Primero generá el inventario."); return; }
+  guardarArchivoYAML(window.__yamlGenerado, "ospf.yml");
+}
+
 async function levantarPaso(paso) {
   const r = $("resultado");
-  if (!(window.pywebview && window.pywebview.api)) {
-    setError("Para elegir el YAML de topología necesitás la ventana nativa de la app.");
-    return;
+  let yaml = window.__yamlGenerado || "";
+  if (!yaml) {
+    if (!(window.pywebview && window.pywebview.api)) {
+      setError("Generá el inventario con 🧩 o usá la ventana nativa para elegir el YAML.");
+      return;
+    }
+    r.innerHTML = `<div class="cargando">Elegí el archivo YAML de topología OSPF (ospf.yml)...</div>`;
+    const res = await window.pywebview.api.abrir_yaml();
+    if (!res || res.cancelado) { r.innerHTML = `<div class="banner-info">Carga cancelada.</div>`; return; }
+    if (!res.ok) { setError(res.error || "No se pudo leer el archivo."); return; }
+    if (!res.yaml || !res.yaml.trim()) { setError("El archivo está vacío."); return; }
+    yaml = res.yaml;
   }
-  r.innerHTML = `<div class="cargando">Elegí el archivo YAML de topología OSPF (ospf.yml)...</div>`;
-  const res = await window.pywebview.api.abrir_yaml();
-  if (!res || res.cancelado) { r.innerHTML = `<div class="banner-info">Carga cancelada.</div>`; return; }
-  if (!res.ok) { setError(res.error || "No se pudo leer el archivo."); return; }
-  if (!res.yaml || !res.yaml.trim()) { setError("El archivo está vacío."); return; }
 
   const paso1 = paso !== 2;
   const endpoint = paso1 ? "/api/ospf_levantar" : "/api/ospf_interfaces";
@@ -953,7 +1001,7 @@ async function levantarPaso(paso) {
   const resp = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ yaml: res.yaml }),
+    body: JSON.stringify({ yaml }),
   });
   const data = await resp.json();
   if (data.ok === false && data.error) { setError(data.error); return; }
@@ -1287,7 +1335,24 @@ const MONI = {
   camino: { nodos: [], aristas: [] }, grafoFull: false,
   sonido: true, notifPedida: false, audio: null,
   slots: null, hist: {},
+  posOverride: null, _drag: null, _dragMovido: false,
 };
+
+const MONI_POS_KEY = "moni.topo.pos";
+function moniPosCargar() {
+  if (MONI.posOverride) return MONI.posOverride;
+  let d = {};
+  try { d = JSON.parse(localStorage.getItem(MONI_POS_KEY) || "{}") || {}; } catch (e) { d = {}; }
+  return (MONI.posOverride = d);
+}
+function moniPosGuardar() {
+  try { localStorage.setItem(MONI_POS_KEY, JSON.stringify(MONI.posOverride || {})); } catch (e) { /* sin almacenamiento */ }
+}
+function moniPosReset() {
+  MONI.posOverride = {};
+  try { localStorage.removeItem(MONI_POS_KEY); } catch (e) { /* sin almacenamiento */ }
+  moniRender(true);
+}
 
 function moniEsc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1564,6 +1629,12 @@ function moniLayout() {
     const a = -Math.PI / 2 + Math.PI / nE + (S.ext[n.id] * 2 * Math.PI) / nE;
     pos[n.id] = { x: cx + rE * Math.cos(a), y: cy + rE * Math.sin(a) };
   }
+  // Posiciones acomodadas a mano (guardadas en el navegador) pisan el layout.
+  const ov = moniPosCargar();
+  for (const id in pos) {
+    const o = ov[id];
+    if (o && isFinite(o.x) && isFinite(o.y)) pos[id] = { x: o.x, y: o.y };
+  }
   return { pos, W, H };
 }
 
@@ -1582,6 +1653,7 @@ function moniSelEnlace(idx) {
 }
 
 function moniSelNodo(ident) {
+  if (MONI._dragMovido) return;
   MONI.filtroNodo = ident;
   MONI.tab = "trafico";
   document.querySelectorAll(".moni-tab").forEach(b => b.classList.toggle("activa", b.dataset.tab === "trafico"));
@@ -1613,6 +1685,63 @@ document.addEventListener("click", (ev) => {
   const sel = document.querySelector(".moni-select");
   if (sel && !sel.contains(ev.target)) moniSelCerrar();
 });
+
+/* ---------- Arrastrar/acomodar nodos del grafo de Topología ---------- */
+function moniSvgPunto(svg, ev) {
+  const r = svg.getBoundingClientRect();
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  const W = (vb && vb.width) || 1000, H = (vb && vb.height) || 580;
+  return { x: (ev.clientX - r.left) * W / (r.width || W), y: (ev.clientY - r.top) * H / (r.height || H) };
+}
+
+let _moniDragRaf = null;
+document.addEventListener("pointerdown", (ev) => {
+  if (ev.button !== 0) return;
+  const t = ev.target;
+  const g = t && t.closest ? t.closest(".nodo-g") : null;
+  const cuerpo = document.getElementById("moni-cuerpo");
+  if (!g || !cuerpo || !cuerpo.contains(g)) return;
+  const svg = g.ownerSVGElement, circ = g.querySelector(".nodo-circulo");
+  const id = g.getAttribute("data-nodo-id");
+  if (!svg || !circ || !id) return;
+  const p = moniSvgPunto(svg, ev);
+  const x0 = parseFloat(circ.getAttribute("cx")) || 0;
+  const y0 = parseFloat(circ.getAttribute("cy")) || 0;
+  MONI._drag = { id, svg, offX: p.x - x0, offY: p.y - y0, cx0: ev.clientX, cy0: ev.clientY, movido: false };
+  try { cuerpo.setPointerCapture(ev.pointerId); } catch (e) { /* sin captura */ }
+});
+
+document.addEventListener("pointermove", (ev) => {
+  const d = MONI._drag;
+  if (!d) return;
+  if (!d.movido && Math.hypot(ev.clientX - d.cx0, ev.clientY - d.cy0) < 3) return;
+  d.movido = true;
+  // El grafo se redibuja seguido: usar siempre el SVG vivo, no la referencia vieja.
+  const svg = (document.querySelector("#moni-cuerpo .grafo") || d.svg);
+  const p = moniSvgPunto(svg, ev);
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  const W = (vb && vb.width) || 1000, H = (vb && vb.height) || 580;
+  const ov = moniPosCargar();
+  ov[d.id] = {
+    x: Math.max(8, Math.min(W - 8, p.x - d.offX)),
+    y: Math.max(8, Math.min(H - 8, p.y - d.offY)),
+  };
+  if (_moniDragRaf) return;
+  _moniDragRaf = requestAnimationFrame(() => { _moniDragRaf = null; moniRender(true); });
+});
+
+function _moniDragFin() {
+  const d = MONI._drag;
+  if (!d) return;
+  MONI._drag = null;
+  if (!d.movido) return;
+  MONI._dragMovido = true;
+  moniPosGuardar();
+  moniRender(true);
+  setTimeout(() => { MONI._dragMovido = false; }, 250);
+}
+document.addEventListener("pointerup", () => { if (MONI._drag) _moniDragFin(); });
+document.addEventListener("pointercancel", () => { if (MONI._drag) _moniDragFin(); });
 
 const MONI_DIAS_JS = ["dom", "lun", "mar", "mie", "jue", "vie", "sab"];
 function moniDiaHoy() { return MONI_DIAS_JS[new Date().getDay()]; }
@@ -1792,12 +1921,14 @@ function moniTopologiaHTML() {
     if (al) histNodo[n.id] = ahora;
     else if (histNodo[n.id] && ahora - histNodo[n.id] >= LINGER) delete histNodo[n.id];
     const sub = n.externo ? "externo" : (n["router-id"] || n.host || "");
-    nod += `<circle class="nodo-circulo${n.mem ? " mem" : ""}" cx="${p.x}" cy="${p.y}" r="${n.externo ? 13 : 21}" fill="#0b1120" stroke="${color}" stroke-width="2.5" onclick="moniSelNodo('${moniEsc(n.id)}')"/>`;
+    nod += `<g class="nodo-g" data-nodo-id="${moniEsc(n.id)}" onclick="moniSelNodo('${moniEsc(n.id)}')">`;
+    nod += `<circle class="nodo-circulo${n.mem ? " mem" : ""}" cx="${p.x}" cy="${p.y}" r="${n.externo ? 13 : 21}" fill="#0b1120" stroke="${color}" stroke-width="2.5"/>`;
     nod += `<text class="nodo-etiqueta" x="${p.x}" y="${p.y - 1}">${moniEsc(n.id)}</text>`;
     nod += `<text class="nodo-sub" x="${p.x}" y="${p.y + 12}">${moniEsc(sub)}</text>`;
     if (n.mem) nod += `<text x="${p.x}" y="${p.y + 26}" text-anchor="middle" font-size="9" fill="#64748b">sin conexión</text>`;
     if (descong) nod += `<text x="${p.x}" y="${p.y + 26}" text-anchor="middle" font-size="9" fill="#f59e0b">descongestionándose</text>`;
     if (al) nod += `<text x="${p.x + (n.externo ? 13 : 21)}" y="${p.y - 10}" font-size="13" font-weight="800" fill="${color}">⚠</text>`;
+    nod += `</g>`;
   }
 
   let detalle = "";
@@ -1818,6 +1949,7 @@ function moniTopologiaHTML() {
 
   return `<div style="margin-bottom:6px">
     <span style="color:var(--text-muted);font-size:12px">${nodos.length} nodos · ${enlaces.length} enlaces · hacé clic en un enlace para ajustar el costo OSPF · los puntos muestran el flujo dominante</span>
+    <button class="btn btn-dark" style="min-width:auto;padding:3px 8px;font-size:11px;vertical-align:middle;margin-left:6px" onclick="moniPosReset()" title="Vuelve a la posición automática">↺ Reacomodar</button>
   </div>
   ${leyenda}
   <svg class="grafo" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">

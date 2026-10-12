@@ -651,10 +651,78 @@ def gateway_predeterminado(api):
 
 
 # -------------------------------------------------------------------------
-# OSPF: lectura y configuracion (RouterOS 6.x, menu /routing/ospf)
+# OSPF: lectura y configuracion (RouterOS 6 y 7; el menu cambia de version)
 # -------------------------------------------------------------------------
 def _decod(o):
     return o.decode(errors="replace") if isinstance(o, bytes) else o
+
+
+def _version_mayor(api):
+    """Numero mayor de la version de RouterOS (7, 6, ...). 6 si no se sabe."""
+    try:
+        v = _decod(_primero(api, "/system/resource/print").get("version", ""))
+        d = "".join(c for c in v.split()[0] if c.isdigit() or c == ".")
+        return int(float(d.split(".")[0])) if d else 6
+    except Exception:  # noqa: BLE001
+        return 6
+
+
+def _menu_redes_ospf(api):
+    """Menu donde se anuncian las redes OSPF segun la version.
+
+    RouterOS 7 usa /routing/ospf/interface-template (campo 'networks');
+    RouterOS 6 usa /routing/ospf/network (campo 'network').
+    """
+    if _version_mayor(api) >= 7:
+        return "/routing/ospf/interface-template"
+    return "/routing/ospf/network"
+
+
+def _campo_red_ospf(api):
+    return "networks" if _version_mayor(api) >= 7 else "network"
+
+
+def _leer_redes_ospf(api):
+    """{red: invalid} del menu de redes OSPF que corresponda a la version."""
+    menu = _menu_redes_ospf(api)
+    campo = _campo_red_ospf(api)
+    out = {}
+    for f in _filas(api, menu + "/print"):
+        out[_decod(f.get(campo, ""))] = _decod(f.get("invalid", False))
+    return out
+
+
+def _agregar_red_ospf(api, red, area_nombre=""):
+    """Anuncia 'red' en el menu OSPF correspondiente (v6 o v7).
+
+    Los enlaces (prefijo < /32) se anuncian como point-to-point en v7 para
+    que no haya eleccion DR/BDR y la adyacencia suba Full enseguida. En v6
+    el tipo se fija con una interfaz estatica aparte (ver _regenerar_redes_ospf).
+    """
+    menu = _menu_redes_ospf(api)
+    kwargs = {_campo_red_ospf(api): red}
+    if area_nombre:
+        kwargs["area"] = area_nombre
+    if _version_mayor(api) >= 7 and _prefijo_de(red) < 32:
+        kwargs["type"] = "ptp"
+    list(api(menu + "/add", **kwargs))
+
+
+def _ptp_activo(api, v7, itf_transito):
+    """True si los enlaces ya estan anunciados como point-to-point.
+
+    v7: toda red de enlace (prefijo < /32) del interface-template debe tener
+    type=ptp. v6: cada interfaz de enlace debe tener una entrada estatica de
+    /routing/ospf/interface con network-type=point-to-point.
+    """
+    if v7:
+        return all(_decod(f.get("type", "")) == "ptp"
+                   for f in _filas(api, "/routing/ospf/interface-template/print")
+                   if _prefijo_de(_decod(f.get("networks", ""))) < 32)
+    ptp = {_decod(f.get("interface", ""))
+           for f in _filas(api, "/routing/ospf/interface/print")
+           if _decod(f.get("network-type", "")) == "point-to-point"}
+    return all(itf in ptp for itf in itf_transito)
 
 
 def ospf_instancias(api):
@@ -664,7 +732,8 @@ def ospf_instancias(api):
         filas.append({
             "nombre": _decod(f.get("name", "")),
             "router-id": _decod(f.get("router-id", "")),
-            "redistribute-connected": _decod(f.get("redistribute-connected", "")),
+            "redistribute-connected": _decod(
+                f.get("redistribute-connected", "") or f.get("redistribute", "")),
             "redistribute-static": _decod(f.get("redistribute-static", "")),
             "estado": _decod(f.get("state", "")),
             "disabled": _decod(f.get("disabled", "")),
@@ -705,11 +774,14 @@ def ospf_vecinos(api):
 
 
 def ospf_redes(api):
-    """Redes anunciadas en OSPF (/routing/ospf/network)."""
+    """Redes anunciadas en OSPF (/routing/ospf/network en v6,
+    /routing/ospf/interface-template en v7)."""
+    menu = _menu_redes_ospf(api)
+    campo = _campo_red_ospf(api)
     filas = []
-    for f in _filas(api, "/routing/ospf/network/print"):
+    for f in _filas(api, menu + "/print"):
         filas.append({
-            "red": _decod(f.get("network", "")),
+            "red": _decod(f.get(campo, "")),
             "area": _decod(f.get("area", "")),
             "disabled": _decod(f.get("disabled", "")),
         })
@@ -766,31 +838,57 @@ def _asignar_ip_a_interfaz(api, interfaz, direccion):
 def _set_instancia_ospf(api, router_id, redistribute=True, area="0.0.0.0"):
     """Configura la instancia OSPF por defecto (router-id + redistribucion).
 
-    El router-id se aplica siempre. 'redistribute-connected' es best-effort:
-    algunos builds de RouterOS 6 rechazan valores distintos de 'no', asi que
-    si falla se devuelve el motivo en el mensaje sin abortar la config.
+    RouterOS 7 no trae instancia por defecto: se crea ('default') y el area
+    backbone se asocia a ella. El router-id se aplica siempre; la
+    redistribucion es best-effort (v6 'redistribute-connected=yes',
+    v7 'redistribute=connected'), asi que si falla no aborta la config.
     """
+    v7 = _version_mayor(api) >= 7
     instancias = _filas(api, "/routing/ospf/instance/print")
+    nombre_inst = "default"
     if not instancias:
-        return "No hay ninguna instancia OSPF para configurar."
-    inst = instancias[0]
+        if not v7:
+            return "No hay ninguna instancia OSPF para configurar."
+        try:
+            list(api("/routing/ospf/instance/add",
+                     **{"name": nombre_inst, "router-id": router_id}))
+            instancias = _filas(api, "/routing/ospf/instance/print")
+        except Exception as e:  # noqa: BLE001
+            return f"No se pudo crear la instancia OSPF: {e}"
+
+    inst = instancias[0] if instancias else {}
     iid = _decod(inst.get(".id", ""))
+    nombre_inst = _decod(inst.get("name", "")) or nombre_inst
     if not iid:
         return "La instancia OSPF no expone .id."
 
     list(api("/routing/ospf/instance/set", **{".id": iid, "router-id": router_id}))
 
     if redistribute:
+        campo = "redistribute" if v7 else "redistribute-connected"
+        valor = "connected" if v7 else "yes"
         try:
-            list(api("/routing/ospf/instance/set",
-                     **{".id": iid, "redistribute-connected": "yes"}))
+            list(api("/routing/ospf/instance/set", **{".id": iid, campo: valor}))
         except Exception as e:  # noqa: BLE001
-            return f"redistribute-connected no aceptado ({e}); se aplicó solo el router-id"
+            return f"{campo} no aceptado ({e}); se aplicó solo el router-id"
+    else:
+        # No redistribuir lo conectado: así la red de gestión no se cuela en
+        # OSPF (las redes de los enlaces ya se anuncian por network). Ademas
+        # sirve para limpiar una redistribución previa.
+        campo = "redistribute" if v7 else "redistribute-connected"
+        valor = "" if v7 else "no"
+        try:
+            list(api("/routing/ospf/instance/set", **{".id": iid, campo: valor}))
+        except Exception:  # noqa: BLE001 - best-effort
+            pass
 
-    # Asegurar area backbone
+    # Asegurar area backbone (en v7 hay que indicar la instancia)
     areas = _filas(api, "/routing/ospf/area/print")
     if not any(_decod(a.get("area-id", "")) == "0.0.0.0" for a in areas):
-        list(api("/routing/ospf/area/add", **{"name": "backbone", "area-id": "0.0.0.0"}))
+        kwargs = {"name": "backbone", "area-id": "0.0.0.0"}
+        if v7:
+            kwargs["instance"] = nombre_inst
+        list(api("/routing/ospf/area/add", **kwargs))
     return None
 
 
@@ -982,6 +1080,7 @@ def _regenerar_redes_ospf(api, redes, bases, dir_loopback, itf_gestion,
     """
     msgs = []
     halladas = []
+    itf_transito = []
     for f in _filas(api, "/ip/address/print"):
         addr = _decod(f.get("address", ""))
         itf = _decod(f.get("interface", ""))
@@ -992,33 +1091,50 @@ def _regenerar_redes_ospf(api, redes, bases, dir_loopback, itf_gestion,
             halladas.append(f"{base}/32")
         elif base in bases:
             halladas.append(f"{base}/{pref}")
-    if not [r for r in halladas if not r.endswith("/32")]:
+            itf_transito.append(itf)
+    if not itf_transito:
         msgs.append("Sin enlaces con IP: se conservan las redes OSPF existentes")
         return msgs
     dir_redes = sorted(set(halladas))
+    v7 = _version_mayor(api) >= 7
 
-    # Comparar con lo que hay: si ya es igual, no se toca nada (así
-    # re-ejecutar no reinicia OSPF). Solo se reconstruye si difiere o si
-    # alguna entrada quedó 'invalid'.
-    actuales = {}
-    for n in _filas(api, "/routing/ospf/network/print"):
-        actuales[_decod(n.get("network", ""))] = _decod(n.get("invalid", False))
-    if set(actuales) == set(dir_redes) and not any(actuales.values()):
+    # Comparar con lo que hay: si ya es igual y los enlaces ya son
+    # point-to-point, no se toca nada (así re-ejecutar no reinicia OSPF).
+    # Solo se reconstruye si difiere, si alguna entrada quedó 'invalid' o
+    # si falta poner algún enlace como point-to-point.
+    actuales = _leer_redes_ospf(api)
+    if (set(actuales) == set(dir_redes) and not any(actuales.values())
+            and _ptp_activo(api, v7, itf_transito)):
         msgs.append(f"redes OSPF ya sincronizadas: {', '.join(dir_redes)}")
         return msgs
 
     area_nombre = _area_ospf(api, area)
-    for n in _filas(api, "/routing/ospf/network/print"):
+    menu = _menu_redes_ospf(api)
+    campo = _campo_red_ospf(api)
+    for n in _filas(api, menu + "/print"):
         try:
-            list(api("/routing/ospf/network/remove", **{".id": n.get(".id")}))
+            list(api(menu + "/remove", **{".id": n.get(".id")}))
         except Exception as e:  # noqa: BLE001
-            msgs.append(f"red vieja {_decod(n.get('network', ''))}: {e}")
+            msgs.append(f"red vieja {_decod(n.get(campo, ''))}: {e}")
+    if not v7:
+        # v6: las interfaces estaticas ptp se crean ANTES del network, que
+        # es el que les asigna el area (el menu interface de v6 no tiene area).
+        for f in _filas(api, "/routing/ospf/interface/print"):
+            if f.get("dynamic") in (True, "true"):
+                continue
+            try:
+                list(api("/routing/ospf/interface/remove", **{".id": f.get(".id")}))
+            except Exception as e:  # noqa: BLE001
+                msgs.append(f"interfaz OSPF vieja: {e}")
+        for itf in sorted(set(itf_transito)):
+            try:
+                list(api("/routing/ospf/interface/add",
+                         **{"interface": itf, "network-type": "point-to-point"}))
+            except Exception as e:  # noqa: BLE001
+                msgs.append(f"{itf}: no se pudo poner point-to-point: {e}")
     for red in dir_redes:
-        kwargs = {"network": red}
-        if area_nombre:
-            kwargs["area"] = area_nombre
         try:
-            list(api("/routing/ospf/network/add", **kwargs))
+            _agregar_red_ospf(api, red, area_nombre or "")
         except Exception as e:  # noqa: BLE001
             msgs.append(f"red {red}: {e}")
     msgs.append(f"redes OSPF desde los cables: {', '.join(dir_redes)}")
@@ -1096,14 +1212,16 @@ def configurar_p2p(api, router_id, networks, peerdatos, host=None,
             enlaces[e["itf"]] = {"ip": ip, "ident": ident, "red": red}
 
     # 3) resincronizar direcciones: sacar las que ya no corresponden al cable
+    #    (incluye redes de enlaces viejos que ya no están en el YAML, siempre
+    #    que la interfaz siga cableada; si no, la red ya no se anuncia igual)
     for f in _filas(api, "/ip/address/print"):
         addr = _decod(f.get("address", ""))
         itf = _decod(f.get("interface", ""))
         if itf in (itf_gestion, itf_loopback):
             continue
-        if _red_base(addr)[0] not in bases:
-            continue
         if addr == enlaces.get(itf, {}).get("ip"):
+            continue
+        if _red_base(addr)[0] not in bases and itf not in enlaces:
             continue
         try:
             list(api("/ip/address/remove", **{".id": f.get(".id")}))
@@ -1163,6 +1281,15 @@ def configurar_ospf(api, router_id, networks, area="0.0.0.0", redistribute=True,
     try:
         itf = _interfaz_loopback(api, loop_net) or _crear_loopback(api)
         _asignar_ip_a_interfaz(api, itf, loop_net)
+        # sacar /32 viejos del router-id que hayan quedado en el loopback
+        # (si cambió la numeración, si no quedan rutas conectadas fantasma)
+        for f in _filas(api, "/ip/address/print"):
+            if _decod(f.get("interface", "")) != itf:
+                continue
+            addr = _decod(f.get("address", ""))
+            if addr != loop_net and _prefijo_de(addr) == 32:
+                list(api("/ip/address/remove", **{".id": f.get(".id")}))
+                msgs.append(f"loopback: quitada {addr} (router-id viejo)")
     except Exception as e:  # noqa: BLE001
         msgs.append(f"interfaz virtual: {e}")
 
@@ -1178,26 +1305,283 @@ def configurar_ospf(api, router_id, networks, area="0.0.0.0", redistribute=True,
     #    (no el area-id ni el .id; ver _area_ospf). Si ya coincide no se
     #    toca nada, para que re-ejecutar no reinicie OSPF.
     deseadas = {str(red).strip() for red in (networks or [])}
-    actuales = {}
-    for n in _filas(api, "/routing/ospf/network/print"):
-        actuales[_decod(n.get("network", ""))] = _decod(n.get("invalid", False))
+    actuales = _leer_redes_ospf(api)
     if _redes_equivalentes(actuales, deseadas):
         return msgs
     area_nombre = _area_ospf(api, area)
-    for n in _filas(api, "/routing/ospf/network/print"):
+    menu = _menu_redes_ospf(api)
+    campo = _campo_red_ospf(api)
+    for n in _filas(api, menu + "/print"):
         try:
-            list(api("/routing/ospf/network/remove", **{".id": n.get(".id")}))
+            list(api(menu + "/remove", **{".id": n.get(".id")}))
         except Exception as e:  # noqa: BLE001
-            msgs.append(f"red vieja {_decod(n.get('network', ''))}: {e}")
-    for red in deseadas:
-        kwargs = {"network": red}
-        if area_nombre:
-            kwargs["area"] = area_nombre
+            msgs.append(f"red vieja {_decod(n.get(campo, ''))}: {e}")
+    for red in sorted(deseadas):
         try:
-            list(api("/routing/ospf/network/add", **kwargs))
+            _agregar_red_ospf(api, red, area_nombre or "")
         except Exception as e:  # noqa: BLE001
             msgs.append(f"red {red}: {e}")
     return msgs
+
+
+def _fijar_clave(api, usuario, clave):
+    """Cambia la clave del usuario indicado (por API). True si lo encontró."""
+    if clave is None:
+        return False
+    for f in _filas(api, "/user/print"):
+        if _decod(f.get("name", "")) == usuario:
+            list(api("/user/set", **{".id": f.get(".id"), "password": str(clave)}))
+            return True
+    return False
+
+
+def _fijar_identidad(api, nombre):
+    """Setea /system/identity name (RouterOS usa 'name', no 'identity')."""
+    list(api("/system/identity/set", **{"name": str(nombre)}))
+
+
+def _macs_por_numero_gns3(gns3_host=None, timeout=4):
+    """Mapea MAC de interfaz -> numero del nodo CHR, leyendo la API de GNS3.
+
+    Sirve para que R<n> coincida con MikroTikCHR...-n del proyecto de GNS3,
+    asi la topologia que muestra la app es la misma que la del canvas.
+    Devuelve {} si GNS3 no responde o no hay nodos CHR.
+
+    El host se toma de la variable de entorno GNS3_HOST
+    (por defecto http://localhost:3080).
+    """
+    import os
+    import re
+    import json
+    import urllib.request
+
+    host = (gns3_host or os.environ.get("GNS3_HOST")
+            or "http://localhost:3080").rstrip("/")
+
+    def _get(path):
+        with urllib.request.urlopen(host + path, timeout=timeout) as r:
+            return json.load(r)
+
+    try:
+        proyectos = _get("/v2/projects")
+    except Exception:  # noqa: BLE001
+        return {}
+
+    # primero el proyecto abierto/en ejecucion (el lab que se esta usando)
+    proyectos.sort(key=lambda p: 0 if p.get("status") in ("opened", "started") else 1)
+    for proy in proyectos:
+        pid = proy.get("project_id")
+        if not pid:
+            continue
+        try:
+            nodos = _get(f"/v2/projects/{pid}/nodes")
+        except Exception:  # noqa: BLE001
+            continue
+        mapa = {}
+        for nodo in nodos:
+            if nodo.get("node_type") != "qemu":
+                continue
+            m = re.search(r"-(\d+)$", nodo.get("name", ""))
+            if not m:
+                continue
+            numero = int(m.group(1))
+            for puerto in nodo.get("ports") or []:
+                mac = (puerto.get("mac_address") or "").lower()
+                if mac:
+                    mapa[mac] = numero
+        if mapa:
+            return mapa
+    return {}
+
+
+def generar_inventario_ospf(hosts, usuario="admin", password="123",
+                            passwords=None, fijar_identidad=True,
+                            forzar_identidad=False, fijar_clave=None,
+                            base="10.0", puerto=8728):
+    """Arma el inventario OSPF (ospf.yml) leyendo la topología real por MNDP.
+
+    No hay que cargar equipos ni redes a mano: se conecta a cada router,
+    mira en cada interfaz qué vecino hay (MNDP/LLDP), deduce quién está
+    cableado con quién, numera los routers R1..Rn por orden de IP y crea
+    una red /24 por enlace (base.<a><b>.0/24) más el /32 de cada router-id.
+
+    - 'passwords': claves a probar por equipo (por defecto [password, ''],
+      por si alguno todavía tiene la clave de fábrica vacía).
+    - 'fijar_identidad': deja cada equipo como R<n>. Es necesario para que
+      el paso 2 reconozca los vecinos: si todos se llaman 'MikroTik' no se
+      pueden distinguir.
+    - 'fijar_clave': si no es None y difiere de la clave de fábrica, además
+      normaliza la clave del usuario a ese valor (y lo refleja en el YAML).
+
+    Devuelve {'ospf', 'yaml', 'equipos', 'enlaces', 'mensajes'}. Lanza
+    ErrorMikroTik si no se pudo leer ningún equipo.
+    """
+    claves = list(passwords) if passwords else [password, ""]
+    mensajes = []
+    routers = {}
+    mac_a_host = {}
+
+    def _macs(api):
+        macs = {}
+        for f in _filas(api, "/interface/print"):
+            if _decod(f.get("type", "")) != "ether":
+                continue
+            mac = (_decod(f.get("mac-address", "")) or "").lower()
+            if mac:
+                macs[_decod(f.get("name", ""))] = mac
+        return macs
+
+    for host in hosts:
+        api = None
+        clave = ""
+        for intento in claves:
+            try:
+                api = conectar(host, usuario, intento, puerto=puerto)
+                clave = intento
+                break
+            except ErrorMikroTik:
+                api = None
+        if not api:
+            mensajes.append(f"{host}: sin acceso (API no responde o credenciales)")
+            continue
+        try:
+            routers[host] = {
+                "host": host,
+                "identidad": identidad(api),
+                "macs": _macs(api),
+                "gestion": _interfaz_de_gestion(api, host),
+                "vecinos": vecinos_interfaz(api),
+                "password": clave,
+                "api": api,
+            }
+        except ErrorMikroTik as e:
+            mensajes.append(f"{host}: {e}")
+            try:
+                api.close()
+            except Exception:  # noqa: BLE001
+                pass
+            continue
+        for mac in routers[host]["macs"].values():
+            mac_a_host[mac] = host
+
+    if not routers:
+        raise ErrorMikroTik("No se pudo leer ningún equipo de la red.")
+
+    # número estable: si el lab corre en GNS3, R<n> = MikroTikCHR...-n para que
+    # la topología de la app coincida con el canvas; si no, por orden de IP.
+    mapa_gns3 = _macs_por_numero_gns3()
+    numero = {}
+    if mapa_gns3:
+        for host, info in routers.items():
+            for mac in info["macs"].values():
+                if mac in mapa_gns3:
+                    numero[host] = mapa_gns3[mac]
+                    break
+    if (len(numero) == len(routers)
+            and len(set(numero.values())) == len(routers)
+            and all(n >= 1 for n in numero.values())):
+        orden = sorted(routers, key=lambda h: numero[h])
+        mensajes.append("numeración por nodo GNS3 (R<n> = MikroTikCHR...-n)")
+    else:
+        orden = sorted(routers, key=lambda h: _ip_a_int(h) or 0)
+        numero = {h: i + 1 for i, h in enumerate(orden)}
+
+    # enlaces por MNDP: vecinos en interfaces que NO son la de gestión
+    enlaces = {}
+    for host, info in routers.items():
+        for itf, vec in info["vecinos"].items():
+            if itf == info["gestion"]:
+                continue
+            peer = mac_a_host.get((vec.get("mac") or "").lower())
+            if not peer or peer == host:
+                continue
+            enlaces.setdefault(frozenset({host, peer}), {"a": host, "b": peer})
+
+    # una red /24 por enlace: base.<n_a><n_b>.0/24 (como el ejemplo)
+    usados = set()
+    for en in enlaces.values():
+        na, nb = sorted((numero[en["a"]], numero[en["b"]]))
+        octeto = f"{na}{nb}"
+        while octeto in usados:
+            octeto = str(int(octeto) + 1)
+        usados.add(octeto)
+        en["red"] = f"{base}.{octeto}.0/24"
+
+    # identidad y clave (opcional) antes de emitir el YAML
+    if fijar_clave is not None:
+        for host in orden:
+            info = routers[host]
+            if info["password"] == str(fijar_clave):
+                continue
+            try:
+                if _fijar_clave(info["api"], usuario, fijar_clave):
+                    info["password"] = str(fijar_clave)
+                    mensajes.append(f"{host}: clave normalizada a {usuario}/{fijar_clave}")
+            except Exception as e:  # noqa: BLE001
+                mensajes.append(f"{host}: no se pudo fijar la clave: {e}")
+    fabrica = {"", "mikrotik", "routeros", "sin nombre"}
+    if fijar_identidad or forzar_identidad:
+        for host in orden:
+            info = routers[host]
+            nuevo = f"R{numero[host]}"
+            actual = (info["identidad"] or "").strip()
+            if actual == nuevo:
+                continue
+            if not forzar_identidad and actual.lower() not in fabrica:
+                # ya tiene un nombre propio (p. ej. Router-XX): no lo pisamos
+                continue
+            try:
+                _fijar_identidad(info["api"], nuevo)
+                info["identidad"] = nuevo
+                mensajes.append(f"{host}: identidad -> {nuevo}")
+            except Exception as e:  # noqa: BLE001
+                mensajes.append(f"{host}: no se pudo fijar identidad: {e}")
+
+    for info in routers.values():
+        try:
+            info["api"].close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # redes por equipo = sus enlaces + su /32 de router-id
+    redes_de = {h: [] for h in routers}
+    for en in enlaces.values():
+        redes_de[en["a"]].append(en["red"])
+        redes_de[en["b"]].append(en["red"])
+
+    equipos = []
+    for host in orden:
+        info = routers[host]
+        n = numero[host]
+        rid = f"{n}.{n}.{n}.{n}"
+        equipos.append({
+            "host": host,
+            "usuario": usuario,
+            "password": info["password"],
+            "router-id": rid,
+            "networks": sorted(set(redes_de[host] + [f"{rid}/32"])),
+            "identidad": info["identidad"],
+            "numero": n,
+        })
+
+    ospf = {"area": "0.0.0.0", "redistribute-connected": False, "equipos": equipos}
+    lineas = ["ospf:", "  area: 0.0.0.0", "  redistribute-connected: false", "  equipos:"]
+    for e in equipos:
+        lineas.append(f"    - host: {e['host']}")
+        lineas.append(f"      usuario: {e['usuario']}")
+        lineas.append(f'      password: "{e["password"]}"')
+        lineas.append(f"      router-id: {e['router-id']}")
+        lineas.append("      networks:")
+        for red in e["networks"]:
+            lineas.append(f"        - {red}")
+
+    lista_enlaces = sorted(
+        ({"a": en["a"], "b": en["b"], "ra": numero[en["a"]],
+          "rb": numero[en["b"]], "red": en["red"]} for en in enlaces.values()),
+        key=lambda x: x["red"])
+
+    return {"ospf": ospf, "yaml": "\n".join(lineas) + "\n",
+            "equipos": equipos, "enlaces": lista_enlaces, "mensajes": mensajes}
 
 
 def interfaces_con_trafico(api):
