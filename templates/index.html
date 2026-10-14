@@ -389,6 +389,9 @@
   @keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
   .moni-sub { color: var(--neon-cyan); font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin: 12px 0 6px; }
+  .moni-desplegable { margin: 4px 0; }
+  .moni-desplegable > summary { cursor: pointer; color: var(--neon-cyan); font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; padding: 4px 0; user-select: none; }
+  .moni-desplegable[open] > summary { margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -748,6 +751,7 @@ async function cambiarEquipo() {
   if (!sel) return;
   window.__equipoActivo = sel.value;
   marcarSesion();
+  if (MONI.abierto) { MONI.filtroNodo = sel.value || ""; moniRender(true); }
   const body = new FormData();
   body.append("categoria", "estado");
   body.append("host", sel.value);
@@ -1332,6 +1336,7 @@ const MONI = {
   eventos: [], cfg: { alarmas: [], capacidades: {}, "capacidad-default": 100000000 },
   metricas: null, selEnlace: null, editAlarma: null, filtroNodo: "",
   dir: { vigente: null, aplicado: [], caminos: [] }, editRegla: null, reglaVer: null,
+  verAplicados: false,
   camino: { nodos: [], aristas: [] }, grafoFull: false,
   sonido: true, notifPedida: false, audio: null,
   slots: null, hist: {},
@@ -1429,6 +1434,10 @@ function moniAbrir(tab) {
   if (p) p.classList.remove("oculto");
   MONI.abierto = true;
   try { const v = localStorage.getItem("moni-intervalo"); if (v) MONI.intervalo = parseInt(v, 10) || 2; } catch (e) {}
+  if (!MONI.filtroNodo) {
+    const act = equipoActivo();
+    if (act) MONI.filtroNodo = act;
+  }
   if (tab) moniTab(tab);
   if (!MONI.notifPedida && "Notification" in window) {
     MONI.notifPedida = true;
@@ -1552,7 +1561,7 @@ function moniTraficoHTML() {
     equipos = equipos.filter(e => e.identidad === MONI.filtroNodo || e.host === MONI.filtroNodo);
   }
   let bps = 0, rx = 0, tx = 0, down = 0;
-  for (const e of MONI.equipos) for (const i of e.interfaces || []) {
+  for (const e of equipos) for (const i of e.interfaces || []) {
     bps += Number(i["total-bps"]) || 0; rx += Number(i["rx-bps"]) || 0; tx += Number(i["tx-bps"]) || 0;
     if (String(i.running) !== "true" && String(i.tipo || "").startsWith("ether")) down++;
   }
@@ -2746,6 +2755,8 @@ function moniDireccionamientoHTML() {
     ? `<div class="banner-info">Regla vigente: <b>${moniEsc(vig.nombre)}</b> (${moniEsc(vig.modo)}) — los costos OSPF los manda esta regla salvo que una alarma los sobreescriba.</div>`
     : `<div class="banner-info">Ninguna regla activa: los costos quedan en dinámico salvo alarmas automáticas.</div>`;
   const apl = (MONI.dir && MONI.dir.aplicado) || [];
+  html += `<details class="moni-desplegable"${MONI.verAplicados ? " open" : ""} ontoggle="MONI.verAplicados=this.open">
+    <summary>Costos aplicados por el motor (${apl.length})</summary>`;
   if (apl.length) {
     html += `<table><thead><tr><th>Equipo</th><th>Interfaz</th><th>Costo aplicado</th><th>Origen</th></tr></thead><tbody>`;
     for (const a of apl) {
@@ -2755,6 +2766,7 @@ function moniDireccionamientoHTML() {
   } else {
     html += `<div class="banner-info">Sin costos aplicados por el motor en este momento.</div>`;
   }
+  html += `</details>`;
 
   const cams = (MONI.dir && MONI.dir.caminos) || [];
   if (cams.length) {
