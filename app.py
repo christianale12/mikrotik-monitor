@@ -62,20 +62,90 @@ app.secret_key = "monitor_mikrotik_secret"
 # Sesiones activas: host -> {"api": api, "host": host, "usuario": usuario}
 SESIONES = {}
 
+# Equipos que no respondieron al conectar (apagados): guardamos sus datos para
+# reintentar solos cuando vuelvan a estar encendidos.
+PENDIENTES = {}
+
 # Alarmas y capacidades de enlace (monitoreo.yml junto al exe)
 mono.iniciar(_dir_datos())
+
+
+_intento_reconexion = {}
+
+
+def _reconectar_host(host):
+    """Reintenta abrir la API de un equipo cuya sesion dejo de responder.
+
+    Pasa cuando un router se apaga y vuelve a encender: el socket queda
+    muerto y hay que abrir uno nuevo para no quedarnos leyendo una sesion
+    caida para siempre. Usa las credenciales guardadas en memoria. Se
+    limita a un intento cada pocos segundos por equipo y con un timeout
+    corto, para no colgar el sondeo si el router sigue apagado."""
+    ses = SESIONES.get(host)
+    if not ses:
+        return None
+    password = ses.get("password")
+    if password is None:
+        return None
+    ahora = time.time()
+    if ahora - _intento_reconexion.get(host, 0.0) < 2:
+        return None
+    _intento_reconexion[host] = ahora
+    usuario = ses.get("usuario") or "admin"
+    try:
+        api = tm.conectar(host, usuario, password, timeout=2)
+    except tm.ErrorMikroTik:
+        return None
+    ses["api"] = api
+    _intento_reconexion.pop(host, None)
+    return api
+
+
+mono.set_reconectar(_reconectar_host)
+
+
+def _marcar_pendiente(host, usuario, password):
+    """Recuerda un equipo que no respondio, para reintentar cuando encienda."""
+    if host:
+        PENDIENTES[host] = {"usuario": usuario or "admin",
+                            "password": password if password is not None else ""}
+
+
+def _intentar_pendientes():
+    """Reconecta los equipos apagados en cuanto su puerto API responda."""
+    for host, cred in list(PENDIENTES.items()):
+        if host in SESIONES:
+            PENDIENTES.pop(host, None)
+            continue
+        try:
+            if not tm._puerto_abierto(host, 8728, timeout=0.4):
+                continue
+        except Exception:  # noqa: BLE001
+            continue
+        try:
+            api = tm.conectar(host, cred.get("usuario") or "admin",
+                              cred.get("password") or "", timeout=2)
+        except tm.ErrorMikroTik:
+            continue
+        SESIONES[host] = {"api": api, "host": host,
+                          "usuario": cred.get("usuario") or "admin",
+                          "password": cred.get("password") or ""}
+        PENDIENTES.pop(host, None)
 
 
 def _hilo_reconciliador():
     """Mantiene los costos OSPF en su estado deseado aunque la interfaz esté
     cerrada: si no hay regla vigente, devuelve a dinámico lo que el motor había
-    cambiado (evita que quede "pegado" el camino de la última regla)."""
+    cambiado (evita que quede "pegado" el camino de la última regla). Tambien
+    reintenta conectar los equipos que estaban apagados y mantiene fresco el
+    ultimo sondeo (snapshot) que sirve /api/monitoreo."""
     while True:
-        time.sleep(3)
+        time.sleep(1)
         try:
+            _intentar_pendientes()
             if not SESIONES:
                 continue
-            if time.time() - mono.ultimo_poll() < 8:
+            if time.time() - mono.ultimo_poll() < 1.2:
                 continue
             mono.poll(SESIONES)
         except Exception:  # noqa: BLE001
@@ -107,7 +177,10 @@ def _api_para(datos):
     ses = SESIONES.get(host)
     if not ses:
         return None, None, f"No hay sesión activa para {host}."
-    return ses.get("api"), host, None
+    api = ses.get("api")
+    if api is None or getattr(api, "rota", False):
+        api = _reconectar_host(host) or api
+    return api, host, None
 
 
 @app.route("/")
@@ -152,10 +225,13 @@ def conectar():
         api = tm.conectar(host, usuario, password)
     except tm.ErrorMikroTik as e:
         SESIONES.pop(host, None)
+        _marcar_pendiente(host, usuario, password)
         return jsonify({"ok": False, "host": host, "error": str(e)})
 
     # Guardar y verificar con un estado general
-    SESIONES[host] = {"api": api, "host": host, "usuario": usuario}
+    SESIONES[host] = {"api": api, "host": host, "usuario": usuario,
+                      "password": password}
+    PENDIENTES.pop(host, None)
     try:
         estado = tm.estado_general(api)
     except tm.ErrorMikroTik as e:
@@ -201,7 +277,9 @@ def conectar_multi():
             continue
         try:
             api = tm.conectar(host, usr, pwd)
-            SESIONES[host] = {"api": api, "host": host, "usuario": usr}
+            SESIONES[host] = {"api": api, "host": host, "usuario": usr,
+                              "password": pwd}
+            PENDIENTES.pop(host, None)
             ident = ""
             try:
                 ident = tm.estado_general(api).get("identidad", "")
@@ -209,6 +287,7 @@ def conectar_multi():
                 pass
             resultados.append({"host": host, "ok": True, "identidad": ident})
         except tm.ErrorMikroTik as e:
+            _marcar_pendiente(host, usr, pwd)
             resultados.append({"host": host, "ok": False, "error": str(e)})
 
     return jsonify({"ok": True, "resultados": resultados, "conectados": list(SESIONES)})
@@ -216,20 +295,32 @@ def conectar_multi():
 
 @app.route("/api/equipos", methods=["POST", "GET"])
 def equipos():
-    """Lista los equipos conectados y su estado."""
+    """Lista los equipos conectados y su estado (sin bloquear el hilo web)."""
     lista = []
     for host, ses in SESIONES.items():
         api = ses.get("api")
+        rota = api is None or getattr(api, "rota", False)
         ident = ""
-        try:
-            ident = tm.estado_general(api).get("identidad", "")
-        except Exception:  # noqa: BLE001
-            pass
+        if not rota:
+            try:
+                ident = tm.estado_general(api).get("identidad", "")
+            except Exception:  # noqa: BLE001
+                rota = True
         lista.append({
             "host": host,
             "usuario": ses.get("usuario", ""),
             "identidad": ident,
-            "conectado": True,
+            "conectado": not rota,
+        })
+    for host, cred in list(PENDIENTES.items()):
+        if host in SESIONES:
+            continue
+        lista.append({
+            "host": host,
+            "usuario": cred.get("usuario", ""),
+            "identidad": "",
+            "conectado": False,
+            "pendiente": True,
         })
     return jsonify({"ok": True, "equipos": lista, "activo": list(SESIONES)[0] if len(SESIONES) == 1 else ""})
 
@@ -336,8 +427,11 @@ def _aplicar_topo(datos, aplicar):
         else:
             try:
                 api = tm.conectar(host, usr, pwd)
-                SESIONES[host] = {"api": api, "host": host, "usuario": usr}
+                SESIONES[host] = {"api": api, "host": host, "usuario": usr,
+                                  "password": pwd}
+                PENDIENTES.pop(host, None)
             except tm.ErrorMikroTik as e:
+                _marcar_pendiente(host, usr, pwd)
                 resultados.append({"host": host, "ok": False, "router-id": router_id,
                                    "error": str(e)})
                 continue
@@ -502,14 +596,27 @@ def api_monitoreo():
 
     'desde' es el ultimo seq que vio el cliente, asi solo recibe los
     eventos que aparecieron desde entonces.
+
+    Devuelve el ultimo sondeo ya calculado (snapshot) sin bloquear: el sondeo
+    real corre en un hilo de fondo. Asi, aunque un router recien encendido
+    responda lento, la interfaz nunca queda esperando ni encola pedidos.
     """
     datos = _datos_request()
     if not SESIONES:
         return jsonify({"ok": True, "ts": time.time(), "equipos": [],
                         "alarmas": [], "seq": 0, "sin_sesion": True,
                         "eventos": mono.eventos_desde(datos.get("desde") or 0)})
+    hosts = _lista_hosts(datos)
     try:
-        res = mono.poll(SESIONES, _lista_hosts(datos))
+        if hosts:
+            res = mono.poll(SESIONES, hosts)
+        else:
+            res = mono.snapshot()
+            if res is None:
+                res = mono.poll(SESIONES)
+            else:
+                res = dict(res)
+                res["reusado"] = True
     except Exception as e:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(e)})
     res["eventos"] = mono.eventos_desde(datos.get("desde") or 0)
@@ -715,6 +822,7 @@ def desconectar():
     host = (datos.get("host") or "").strip()
     if host:
         ses = SESIONES.pop(host, None)
+        PENDIENTES.pop(host, None)
         if ses:
             try:
                 ses["api"].close()
@@ -727,6 +835,8 @@ def desconectar():
         except Exception:  # noqa: BLE001
             pass
     SESIONES.clear()
+    PENDIENTES.clear()
+    mono.olvidar_snapshot()
     return jsonify({"ok": True, "desconectado": "todos", "conectados": []})
 
 

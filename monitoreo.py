@@ -24,6 +24,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
@@ -41,6 +42,7 @@ OPERADORES = (">", ">=", "<", "<=", "==", "!=")
 
 _lock = threading.RLock()
 _poll_lock = threading.Lock()
+_recoger_lock = threading.Lock()
 _muestra = {}
 _config = {"capacidad-default": CAPACIDAD_DEFECTO, "saturado-pct": SATURADO_PCT_DEFECTO,
            "capacidades": {}, "alarmas": [], "direccionamiento": [], "regla-activa": None}
@@ -57,7 +59,16 @@ _rutas_cache = {}   # host -> (ts, {destino: interfaz-Salida})
 _aplicado = {}      # (host, iface) -> {"costo": int, "origen": str}  (lo que el motor dejó puesto)
 _fallback = {}      # (host, iface) -> {"costo": int, "alarma": id}  (costo "normal" al liberar)
 _efectos_activos = []  # últimos efectos de alarmas, para no pisarlos al cambiar de regla
+_reconectar = [None]   # hook que setea la app para reconectar sesiones caidas
+_ultimo = {}           # último resultado completo de poll(), para servirlo sin bloquear
 DIAS = ("lun", "mar", "mie", "jue", "vie", "sab", "dom")
+
+
+def set_reconectar(fn):
+    """Registra la funcion (host) -> api|None con la que reintentar sesiones
+    caidas. La usa 'recoger' cuando la API de un equipo dejo de responder
+    (por ejemplo, si el router se apago y volvio a encender)."""
+    _reconectar[0] = fn
 
 
 def iniciar(dir_datos):
@@ -482,28 +493,38 @@ def _identidad(api, host):
         v = _cache_id.get(host)
     if v and v[0] and time.time() - v[1] < 600:
         return v[0]
+    if getattr(api, "rota", False):
+        return v[0] if v else ""
     try:
         nombre = tm.identidad(api)
     except Exception:  # noqa: BLE001
         nombre = v[0] if v else ""
+    # Mientras un equipo esta terminando de cargar (recien reiniciado) su
+    # identidad todavia es la de fabrica ("MikroTik"): no la memorizamos, asi
+    # en el proximo ciclo se vuelve a leer y aparece el nombre real (R1, etc.).
+    defecto = str(nombre).strip().lower() in ("", "mikrotik", "routeros",
+                                              "mikrotik routeros")
     with _lock:
-        _cache_id[host] = (nombre, time.time())
+        _cache_id[host] = (nombre, 0.0 if defecto else time.time())
     return nombre
 
 
 def _router_id(api, host):
     with _lock:
         v = _cache_rid.get(host)
-    if v and time.time() - v[1] < 600:
+    if v and v[0] and time.time() - v[1] < 600:
         return v[0]
     rid = ""
+    if getattr(api, "rota", False):
+        return v[0] if v else ""
     try:
         inst = tm.ospf_instancias(api)
         rid = str(inst[0].get("router-id") or "") if inst else ""
     except Exception:  # noqa: BLE001
         rid = v[0] if v else ""
+    defecto = rid in ("", "0.0.0.0")
     with _lock:
-        _cache_rid[host] = (rid, time.time())
+        _cache_rid[host] = (rid, 0.0 if defecto else time.time())
     return rid
 
 
@@ -564,7 +585,7 @@ def _rutas_de(sesiones, host):
         return v[1]
     mapa = {}
     api = (sesiones.get(host) or {}).get("api") if sesiones else None
-    if api:
+    if api and not getattr(api, "rota", False):
         try:
             for r in tm.ospf_rutas(api):
                 if r.get("activa") not in (True, "true", "yes", "1"):
@@ -703,6 +724,11 @@ def _armar_topologia(recogidos, sesiones=None):
     for nid, reg in list(_mem_nodos.items()):
         if nid in usados:
             continue
+        # Si el equipo volvio a responder con otra identidad (p.ej. paso de
+        # "MikroTik" a "R1"), descartar el nodo viejo en vez de dejarlo pegado.
+        if (reg.get("nodo") or {}).get("host") in recogidos:
+            _mem_nodos.pop(nid, None)
+            continue
         if ahora - float(reg.get("ts") or 0) > OLVIDO_TOPO:
             _mem_nodos.pop(nid, None)
             continue
@@ -711,6 +737,23 @@ def _armar_topologia(recogidos, sesiones=None):
         nodos.append(nodo)
         usados.add(nid)
         nodo_rid.setdefault(nid, nodo.get("router-id") or "")
+
+    # Identidad/router-id recordados de equipos que no responden ahora. Sirven
+    # para reconocer a un vecino OSPF "pegado" del router apagado y marcarlo
+    # como enlace caido, en vez de inventar un nodo externo con el trafico del
+    # lado que si esta encendido.
+    mem_rid, mem_ident = {}, {}
+    for reg in _mem_nodos.values():
+        nodo = reg.get("nodo") or {}
+        h = nodo.get("host")
+        if not h or h in recogidos:
+            continue
+        rid_m = str(nodo.get("router-id") or "")
+        if rid_m:
+            mem_rid.setdefault(rid_m, h)
+        ident_m = str(nodo.get("identidad") or "")
+        if ident_m:
+            mem_ident.setdefault(ident_m, h)
 
     addr_idx = {}
     for host, d in recogidos.items():
@@ -726,18 +769,22 @@ def _armar_topologia(recogidos, sesiones=None):
     parciales = []
     sueltos = []
 
+    ext_nid = {}
+
     def nodo_externo(etiqueta):
-        nid = etiqueta or "desconocido"
-        base = nid
+        etiqueta = etiqueta or "desconocido"
+        if etiqueta in ext_nid:
+            return ext_nid[etiqueta]
+        nid = etiqueta
         n = 2
         while nid in usados:
-            nid = f"{base}#{n}"
+            nid = f"{etiqueta}#{n}"
             n += 1
-        if nid not in usados:
-            usados.add(nid)
-            nodos.append({"id": nid, "host": "", "identidad": base,
-                          "router-id": base if base.count(".") == 3 else "",
-                          "externo": True})
+        usados.add(nid)
+        nodos.append({"id": nid, "host": "", "identidad": etiqueta,
+                      "router-id": etiqueta if etiqueta.count(".") == 3 else "",
+                      "externo": True})
+        ext_nid[etiqueta] = nid
         return nid
 
     for host, d in recogidos.items():
@@ -768,18 +815,22 @@ def _armar_topologia(recogidos, sesiones=None):
                     clave = frozenset({(host, iface), destino})
                     exactos.setdefault(clave, []).append(lado)
                     continue
-                dest_host = rid_a_host.get(str(vec.get("router-id") or ""))
+                rid_v = str(vec.get("router-id") or "")
+                # El vecino OSPF puede quedar "pegado" un rato aunque el router
+                # del otro lado ya este apagado: si coincide con uno recordado
+                # que no responde, se lo trata como caido (no como externo).
+                dest_host = rid_a_host.get(rid_v) or mem_rid.get(rid_v)
                 if dest_host and dest_host != host:
                     lado["pendiente"] = dest_host
                     parciales.append(lado)
                     continue
-                nid = nodo_externo(str(vec.get("router-id") or ""))
+                nid = nodo_externo(rid_v)
                 lado["nodo-externo"] = nid
                 exactos.setdefault(frozenset({(host, iface), ("ext", nid)}), []).append(lado)
                 continue
             m = d["mndp"].get(iface) or {}
             ident_vec = str(m.get("identity") or "")
-            dest_host = ident_a_host.get(ident_vec)
+            dest_host = ident_a_host.get(ident_vec) or mem_ident.get(ident_vec)
             if dest_host and dest_host != host:
                 lado["pendiente"] = dest_host
                 parciales.append(lado)
@@ -868,6 +919,35 @@ def _armar_topologia(recogidos, sesiones=None):
     for par, reg in list(_mem_enlaces.items()):
         if ahora - float(reg.get("ts") or 0) > OLVIDO_TOPO:
             _mem_enlaces.pop(par, None)
+
+    # Enlaces entre dos equipos recordados que hoy no responden: reconstruir el
+    # cable desde la memoria para no dejar el mapa sin enlaces cuando cae todo.
+    host_nid = dict(por_host)
+    for _nid, _reg in _mem_nodos.items():
+        _h = (_reg.get("nodo") or {}).get("host")
+        if _h:
+            host_nid.setdefault(_h, (_reg.get("nodo") or {}).get("id"))
+    punta_dibujada = set()
+    for e in enlaces:
+        for lado in (e["a"], e["b"]):
+            if lado and lado.get("equipo") and lado.get("interfaz"):
+                punta_dibujada.add((lado["equipo"], lado["interfaz"]))
+    base_mem = {"direccion": "", "red": "", "running": False, "link-downs": 0,
+                "costo": None, "ospf": "", "vecino-rid": "", "rx-bps": 0,
+                "tx-bps": 0, "total-bps": 0, "capacidad": 0, "pct": 0, "mem": True}
+    for (h, itf), reg in list(_mem_enlaces.items()):
+        ph, pi = reg.get("peer_host"), reg.get("peer_iface")
+        if not h or not itf or not ph or not pi:
+            continue
+        if (h, itf) in punta_dibujada or (ph, pi) in punta_dibujada:
+            continue
+        if h not in host_nid or ph not in host_nid:
+            continue
+        a = dict(base_mem, equipo=h, nodo=host_nid[h], interfaz=itf)
+        b = dict(base_mem, equipo=ph, nodo=host_nid[ph], interfaz=pi)
+        enlaces.append(_armar_enlace(a, b))
+        punta_dibujada.add((h, itf))
+        punta_dibujada.add((ph, pi))
 
     # deduplicar el mismo cable (en un corte puede reportarlo una sola punta)
     def _clave_cable(e):
@@ -1007,27 +1087,150 @@ def _armar_enlace(a, b):
     }
 
 
+def _leer_equipo(api, host):
+    """Una pasada de lecturas de las que depende el monitoreo y la topologia."""
+    return {
+        "filas": tm.interfaces_con_trafico(api),
+        "dirs": tm._filas(api, "/ip/address/print"),
+        "ospf-itf": tm.ospf_interfaces_lista(api),
+        "ospf-vec": tm.ospf_vecinos(api),
+        "mndp": tm.vecinos_interfaz(api),
+    }
+
+
+def _intentar_reconectar(host):
+    """Pide a la app reconectar el equipo si su API dejo de responder."""
+    fn = _reconectar[0]
+    if not fn:
+        return None
+    try:
+        return fn(host)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _recoger_host(sesiones, host):
+    """I/O de red de un equipo. Se ejecuta en paralelo, uno por host."""
+    th = time.time()
+    ses = sesiones.get(host) or {}
+    api = ses.get("api")
+    if not api:
+        return None
+    err = None
+    leido = None
+    marcas = []
+    # Chequeo rapido del puerto API (0,4 s): evita leer o reconectar el socket
+    # de un router apagado, que cuesta segundos por consulta/intento. Y cuando
+    # el router vuelve, el puerto responde al instante y se reabre.
+    try:
+        puerto_ok = bool(tm._puerto_abierto(host, 8728, timeout=0.4))
+    except Exception:  # noqa: BLE001
+        puerto_ok = True
+    marcas.append("puerto=%s/%.2f" % (puerto_ok, time.time() - th))
+    if not puerto_ok:
+        err = "puerto API cerrado (¿apagado?)"
+        try:
+            api._rota = True
+        except Exception:  # noqa: BLE001
+            pass
+    elif not getattr(api, "rota", False):
+        _t = time.time()
+        try:
+            leido = _leer_equipo(api, host)
+            if not (leido.get("filas") or leido.get("dirs")):
+                # Un socket muerto a veces devuelve vacio en vez de error.
+                leido = None
+                err = "sin respuesta (¿apagado?)"
+                try:
+                    api._rota = True
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+            try:
+                api._rota = True
+            except Exception:  # noqa: BLE001
+                pass
+        marcas.append("leer=%.2f" % (time.time() - _t))
+    if leido is None and puerto_ok:
+        # El puerto responde pero la sesion puede haber quedado vieja (p.ej. el
+        # equipo se reinicio): reabrir la conexion.
+        _t = time.time()
+        api = _intentar_reconectar(host)
+        marcas.append("recon=%.2f/%s" % (time.time() - _t, api is not None))
+        if api is not None:
+            # Tras un reinicio la identidad pudo haber cambiado: releerla.
+            with _lock:
+                _cache_id.pop(host, None)
+                _cache_rid.pop(host, None)
+            try:
+                leido = _leer_equipo(api, host)
+                if not (leido.get("filas") or leido.get("dirs")):
+                    leido = None
+                    err = err or "sin respuesta (¿apagado?)"
+            except Exception as e:  # noqa: BLE001
+                err = str(e)
+                leido = None
+    nombre = rid = None
+    if leido is not None:
+        nombre = _identidad(api, host)
+        rid = _router_id(api, host)
+    return {"host": host, "api": api, "leido": leido, "err": err,
+            "nombre": nombre, "rid": rid, "th": th, "marcas": marcas}
+
+
 def recoger(sesiones, hosts=None):
-    """Lee de cada equipo todo lo necesario para monitoreo y topologia."""
+    """Lee de cada equipo todo lo necesario para monitoreo y topologia.
+
+    Las lecturas de red de cada equipo corren en paralelo: asi un equipo lento
+    (o recien encendido, cuya API todavia no responde) no demora a los demas.
+    """
     elegidos = [h for h in (hosts or list(sesiones)) if h in sesiones]
+    if not elegidos:
+        return {}, []
+    with _recoger_lock:
+        trabajos = {}
+        if len(elegidos) == 1:
+            host = elegidos[0]
+            try:
+                trabajos[host] = _recoger_host(sesiones, host)
+            except Exception as e:  # noqa: BLE001
+                trabajos[host] = {"host": host, "api": None, "leido": None,
+                                  "err": str(e), "nombre": None, "rid": None,
+                                  "th": time.time(), "marcas": []}
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(elegidos), 8)) as ex:
+                futuros = {ex.submit(_recoger_host, sesiones, h): h for h in elegidos}
+                for fut in as_completed(futuros):
+                    host = futuros[fut]
+                    try:
+                        trabajos[host] = fut.result()
+                    except Exception as e:  # noqa: BLE001
+                        trabajos[host] = {"host": host, "api": None, "leido": None,
+                                          "err": str(e), "nombre": None, "rid": None,
+                                          "th": time.time(), "marcas": []}
+
     recogidos = {}
     equipos = []
     for host in elegidos:
-        ses = sesiones.get(host) or {}
-        api = ses.get("api")
-        if not api:
+        r = trabajos.get(host)
+        if not r:
             continue
-        try:
-            filas = tm.interfaces_con_trafico(api)
-            dirs = tm._filas(api, "/ip/address/print")
-            ospf_itf = tm.ospf_interfaces_lista(api)
-            ospf_vec = tm.ospf_vecinos(api)
-            mndp = tm.vecinos_interfaz(api)
-        except Exception as e:  # noqa: BLE001
-            equipos.append({"host": host, "ok": False, "error": str(e), "interfaces": []})
+        leido = r["leido"]
+        if leido is None:
+            with _lock:
+                _muestra.pop(host, None)
+            equipos.append({"host": host, "ok": False,
+                            "error": r["err"] or "sin respuesta (¿apagado?)",
+                            "interfaces": []})
             continue
-        nombre = _identidad(api, host)
-        rid = _router_id(api, host)
+        filas = leido["filas"]
+        dirs = leido["dirs"]
+        ospf_itf = leido["ospf-itf"]
+        ospf_vec = leido["ospf-vec"]
+        mndp = leido["mndp"]
+        nombre = r["nombre"]
+        rid = r["rid"]
         interfaces = muestrear(host, filas)
         for i in interfaces:
             i["direccion"] = ""
@@ -1069,12 +1272,6 @@ def topologia(sesiones, forzar=False):
     if not forzar and time.time() - float(ts or 0) < TOPO_TTL:
         return guardada
     recogidos, _ = recoger(sesiones)
-    if not recogidos:
-        vacia = {"ts": time.time(), "nodos": [], "enlaces": []}
-        with _lock:
-            _topo.clear()
-            _topo.update(vacia)
-        return vacia
     nueva = _armar_topologia(recogidos, sesiones)
     nueva["ts"] = time.time()
     with _lock:
@@ -1226,6 +1423,10 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
             origen[par] = etq
     with _lock:
         aplicado = dict(_aplicado)
+    # No escribir en equipos caidos: su socket esta muerto y fijar_costo_ospf
+    # bloquearia el sondeo ~8 s por par. Se dejan pendientes en 'deseado' para
+    # aplicarlos cuando el equipo vuelva a responder.
+    caidos = {e.get("host") for e in (equipos or []) if not e.get("ok")}
     cambios = []
     for par in set(aplicado) | set(deseado):
         quieren = deseado.get(par)
@@ -1234,9 +1435,16 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
             continue
         eq, itf = par
         api = (sesiones.get(eq) or {}).get("api")
-        if not api:
+        if not api or eq in caidos or getattr(api, "rota", False):
             continue
-        err = tm.fijar_costo_ospf(api, itf, quieren)
+        try:
+            err = tm.fijar_costo_ospf(api, itf, quieren)
+        except Exception as e:  # noqa: BLE001
+            err = str(e)
+            try:
+                api._rota = True
+            except Exception:  # noqa: BLE001
+                pass
         if err:
             cambios.append(err)
             continue
@@ -1442,36 +1650,31 @@ def _lado_de(topo, host, iface):
     return None
 
 
-def poll(sesiones, hosts=None):
-    """Ciclo completo de monitoreo: lee, calcula, evalúa alarmas, arma topología.
-
-    Un candado propio evita que dos refrescos simultáneos (por ejemplo al
-    reanudar la pestaña) lean y escriban el estado de las alarmas a la vez.
-    """
+def _poll_bajo_lock(sesiones, hosts=None):
+    """Cuerpo de un ciclo de sondeo. Se ejecuta con _poll_lock ya tomado."""
     global _efectos_activos
-    with _poll_lock:
-        recogidos, equipos = recoger(sesiones, hosts)
-        topo = _armar_topologia(recogidos, sesiones) if recogidos else {"nodos": [], "enlaces": []}
+    recogidos, equipos = recoger(sesiones, hosts)
+    topo = _armar_topologia(recogidos, sesiones)
+    topo["ts"] = time.time()
+    with _lock:
+        _topo.clear()
+        _topo.update(topo)
+    alarmas, efectos = _evaluar_alarmas(sesiones, topo, equipos, time.time())
+    with _lock:
+        _efectos_activos = efectos
+    cambios = _reconciliar_costos(sesiones, topo, equipos, efectos)
+    if cambios:
+        topo = _armar_topologia(recogidos, sesiones)
         topo["ts"] = time.time()
         with _lock:
             _topo.clear()
             _topo.update(topo)
-        alarmas, efectos = _evaluar_alarmas(sesiones, topo, equipos, time.time())
-        with _lock:
-            _efectos_activos = efectos
-        cambios = _reconciliar_costos(sesiones, topo, equipos, efectos)
-        if cambios:
-            topo = _armar_topologia(recogidos, sesiones) if recogidos else topo
-            topo["ts"] = time.time()
-            with _lock:
-                _topo.clear()
-                _topo.update(topo)
-        regla_vig, _modo = regla_vigente(anticipo=ANTICIPO_RECONVERGENCIA)
-        dir_estado = estado_direccionamiento()
-        dir_estado["caminos"] = _caminos_regla(topo, sesiones, regla_vig)
-        with _lock:
-            ultimo = _seq[0]
-    return {
+    regla_vig, _modo = regla_vigente(anticipo=ANTICIPO_RECONVERGENCIA)
+    dir_estado = estado_direccionamiento()
+    dir_estado["caminos"] = _caminos_regla(topo, sesiones, regla_vig)
+    with _lock:
+        ultimo = _seq[0]
+    res = {
         "ok": True,
         "ts": time.time(),
         "equipos": equipos,
@@ -1480,6 +1683,45 @@ def poll(sesiones, hosts=None):
         "direccionamiento": dir_estado,
         "seq": ultimo,
     }
+    with _lock:
+        _ultimo.clear()
+        _ultimo.update(res)
+    return res
+
+
+def poll(sesiones, hosts=None):
+    """Ciclo completo de monitoreo: lee, calcula, evalúa alarmas, arma topología.
+
+    Un candado propio evita que dos refrescos simultáneos (por ejemplo al
+    reanudar la pestaña) lean y escriban el estado de las alarmas a la vez.
+    """
+    with _poll_lock:
+        return _poll_bajo_lock(sesiones, hosts)
+
+
+def intentar_poll(sesiones, hosts=None):
+    """Igual que poll() pero sin bloquear: si ya hay un ciclo en curso devuelve
+    None de inmediato, para que una petición HTTP no quede esperando a que
+    termine el sondeo (clave cuando un router recién encendido responde lento)."""
+    if not _poll_lock.acquire(blocking=False):
+        return None
+    try:
+        return _poll_bajo_lock(sesiones, hosts)
+    finally:
+        _poll_lock.release()
+
+
+def snapshot():
+    """Último resultado de sondeo ya calculado, o None si todavía no hubo uno."""
+    with _lock:
+        return dict(_ultimo) if _ultimo else None
+
+
+def olvidar_snapshot():
+    """Descarta el último sondeo (al desconectar todos los equipos)."""
+    with _lock:
+        _ultimo.clear()
+
 
 
 def restaurar_todos(sesiones, hosts=None):
@@ -1492,13 +1734,17 @@ def restaurar_todos(sesiones, hosts=None):
     ok = True
     for host in elegidos:
         api = (sesiones.get(host) or {}).get("api")
-        if not api:
+        if not api or getattr(api, "rota", False):
             continue
         try:
             filas = tm.ospf_interfaces_lista(api)
         except Exception as e:  # noqa: BLE001
             msgs.append(f"{host}: {e}")
             ok = False
+            try:
+                api._rota = True
+            except Exception:  # noqa: BLE001
+                pass
             continue
         for f in filas:
             if not f.get("estatico"):
@@ -1547,7 +1793,9 @@ def aplicar_regla_ahora(sesiones):
     for h in sesiones:
         if h not in vistos:
             vistos.add(h)
-            equipos.append({"host": h, "identidad": ""})
+            api = (sesiones.get(h) or {}).get("api")
+            equipos.append({"host": h, "identidad": "",
+                            "ok": not getattr(api, "rota", False)})
     with _poll_lock:
         return _reconciliar_costos(sesiones, topo, equipos, efectos)
 
@@ -1559,6 +1807,10 @@ def metricas(sesiones, hosts=None):
     for host in elegidos:
         api = (sesiones.get(host) or {}).get("api")
         if not api:
+            continue
+        if getattr(api, "rota", False):
+            salida.append({"host": host, "ok": False,
+                           "error": "sin respuesta (¿apagado?)", "interfaces": []})
             continue
         try:
             filas = tm.ospf_interfaces_lista(api)

@@ -200,16 +200,26 @@ class _ApiSerial:
         object.__setattr__(self, "_api", api)
         object.__setattr__(self, "_lock", threading.RLock())
         object.__setattr__(self, "_host", host or getattr(api, "host", ""))
+        object.__setattr__(self, "_rota", False)
 
     @property
     def host(self):
         return object.__getattribute__(self, "_host")
 
+    @property
+    def rota(self):
+        """True si el socket dejo de responder (se corto la sesion)."""
+        return object.__getattribute__(self, "_rota")
+
     def __call__(self, *args, **kwargs):
         lock = object.__getattribute__(self, "_lock")
         api = object.__getattribute__(self, "_api")
         with lock:
-            res = api(*args, **kwargs)
+            try:
+                res = api(*args, **kwargs)
+            except OSError:
+                object.__setattr__(self, "_rota", True)
+                raise
             if isinstance(res, (list, tuple)):
                 return list(res)
             try:
@@ -226,7 +236,11 @@ class _ApiSerial:
 
         def _envuelto(*args, **kwargs):
             with lock:
-                return attr(*args, **kwargs)
+                try:
+                    return attr(*args, **kwargs)
+                except OSError:
+                    object.__setattr__(self, "_rota", True)
+                    raise
 
         return _envuelto
 

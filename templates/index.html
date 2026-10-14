@@ -1887,7 +1887,10 @@ function moniTopologiaHTML() {
     lin += `<line class="linea${st.cur.reenvio ? " reenvio" : ""}" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke="${color}" stroke-width="${ancho}"${dash} opacity="${st.op.toFixed(2)}"/>`;
     lin += `<line class="linea-hit" x1="${pa.x}" y1="${pa.y}" x2="${pb.x}" y2="${pb.y}" stroke-width="16" onclick="moniSelEnlace(${idx})" cursor="pointer"/>`;
     const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
-    const total = Math.max(Number(la && la["total-bps"]) || 0, Number(lb && lb["total-bps"]) || 0);
+    // Un enlace caido no transporta trafico aunque el lado encendido siga
+    // contando algun paquete de broadcast: mostrar 0 y sin animacion de flujo.
+    const total = (st.cur.estado === "caido" || (la && la.mem) || (lb && lb.mem))
+      ? 0 : Math.max(Number(la && la["total-bps"]) || 0, Number(lb && lb["total-bps"]) || 0);
     etiq += `<text class="enlace-etiqueta" x="${mx}" y="${my - 6}">${moniEsc(e.red)} · ${moniBps(total)}</text>`;
     let marca = "", marcaColor = st.color;
     if (st.cur.reenvio) marca = "ruta de reenvío";
