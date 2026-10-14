@@ -1386,6 +1386,7 @@ function moniBps(n) {
 function moniEtqMetrica(m) {
   const u = {
     "total-bps": "Total", "red-bps": "Total de red",
+    "camino-bps": "Tráfico del camino",
     "rx-bps": "RX", "tx-bps": "TX", "pct": "% saturación",
   };
   return u[m] || m;
@@ -1553,6 +1554,39 @@ function moniCargarCfg() {
   moniPost("/api/capacidades", {}).then(d => { if (d && d.ok) MONI.cfg = d.config || MONI.cfg; });
 }
 
+/* Suma el tráfico real de las interfaces dadas sin doble conteo: cada cable
+   cuenta una sola vez (se toma la punta más cargada), igual que el mapa. Las
+   interfaces que no forman parte de un cable conocido se cuentan aparte. */
+function moniTraficoReal(equipos) {
+  const peer = {}, caido = {};
+  for (const e of (MONI.topo && MONI.topo.enlaces) || []) {
+    const a = e.a, b = e.b;
+    if (a && b && a.equipo && b.equipo) {
+      const ka = a.equipo + "|" + a.interfaz, kb = b.equipo + "|" + b.interfaz;
+      peer[ka] = kb; peer[kb] = ka;
+      caido[ka] = e.estado; caido[kb] = e.estado;
+    }
+  }
+  const sel = new Set();
+  for (const e of equipos) for (const i of e.interfaces || []) sel.add(e.host + "|" + (i.nombre || ""));
+  const rep = {};
+  for (const e of equipos) for (const i of e.interfaces || []) {
+    const k = e.host + "|" + (i.nombre || "");
+    const p = peer[k];
+    const esCable = !!(p && sel.has(p));
+    const grupo = esCable ? [k, p].sort().join("||") : k;
+    const enCaido = esCable && caido[k] === "caido";
+    const t = enCaido ? 0 : (Number(i["total-bps"]) || 0);
+    const down = String(i.running) !== "true" && String(i.tipo || "").startsWith("ether");
+    if (!rep[grupo] || t > rep[grupo].t) {
+      rep[grupo] = { t, r: Number(i["rx-bps"]) || 0, x: Number(i["tx-bps"]) || 0, down };
+    }
+  }
+  let bps = 0, rx = 0, tx = 0, down = 0;
+  for (const g in rep) { bps += rep[g].t; rx += rep[g].r; tx += rep[g].x; if (rep[g].down) down++; }
+  return { bps, rx, tx, down };
+}
+
 /* ---------- Tab Tráfico ---------- */
 function moniTraficoHTML() {
   let equipos = MONI.equipos || [];
@@ -1560,16 +1594,13 @@ function moniTraficoHTML() {
   if (MONI.filtroNodo) {
     equipos = equipos.filter(e => e.identidad === MONI.filtroNodo || e.host === MONI.filtroNodo);
   }
-  let bps = 0, rx = 0, tx = 0, down = 0;
-  for (const e of equipos) for (const i of e.interfaces || []) {
-    bps += Number(i["total-bps"]) || 0; rx += Number(i["rx-bps"]) || 0; tx += Number(i["tx-bps"]) || 0;
-    if (String(i.running) !== "true" && String(i.tipo || "").startsWith("ether")) down++;
-  }
+  const { bps, rx, tx, down } = moniTraficoReal(equipos);
   const activos = (MONI.alarmas || []).filter(a => a.estado === "activa").length;
+  const tReal = "Tráfico real: cada cable cuenta una sola vez (máximo de sus dos puntas), igual que el mapa";
   let html = `<div class="moni-resumen">
-    <div class="tarjeta"><div class="k">Tráfico total</div><div class="v">${moniBps(bps)}</div></div>
-    <div class="tarjeta"><div class="k">RX total</div><div class="v" style="color:#34d399">${moniBps(rx)}</div></div>
-    <div class="tarjeta"><div class="k">TX total</div><div class="v" style="color:#fbbf24">${moniBps(tx)}</div></div>
+    <div class="tarjeta" title="${tReal}"><div class="k">${MONI.filtroNodo ? "Tráfico total del equipo" : "Tráfico total (todos los equipos)"}</div><div class="v">${moniBps(bps)}</div></div>
+    <div class="tarjeta" title="${tReal}"><div class="k">RX total</div><div class="v" style="color:#34d399">${moniBps(rx)}</div></div>
+    <div class="tarjeta" title="${tReal}"><div class="k">TX total</div><div class="v" style="color:#fbbf24">${moniBps(tx)}</div></div>
     <div class="tarjeta"><div class="k">Alarmas activas</div><div class="v" style="color:${activos ? "#f87171" : "#34d399"}">${activos}</div></div>
     <div class="tarjeta"><div class="k">Enlaces caídos</div><div class="v" style="color:${down ? "#f87171" : "#34d399"}">${down}</div></div>
   </div>`;
@@ -1865,6 +1896,23 @@ function moniTopologiaHTML() {
     return { cur, linger, color, op, id };
   });
 
+  // Índice de enlace por extremo (equipo|interfaz) para poder recorrer el
+  // camino de la regla vigente enlaces por enlaces (cada enlace se cuenta
+  // UNA sola vez aunque el camino pase por sus dos extremos).
+  const idxPar = new Map();
+  enlaces.forEach((e, idx) => {
+    if (e.a && e.a.equipo != null) idxPar.set(e.a.equipo + "|" + e.a.interfaz, idx);
+    if (e.b && e.b.equipo != null) idxPar.set(e.b.equipo + "|" + e.b.interfaz, idx);
+  });
+
+  // Un enlace caído no transporta tráfico aunque el lado encendido siga
+  // contando paquetes: misma regla que para las etiquetas del mapa.
+  const linkBps = (e, st) => {
+    const la = e.a, lb = e.b || null;
+    return (st.cur.estado === "caido" || (la && la.mem) || (lb && lb.mem))
+      ? 0 : Math.max(Number(la && la["total-bps"]) || 0, Number(lb && lb["total-bps"]) || 0);
+  };
+
   let lin = "", flujo = "", etiq = "", nod = "";
   enlaces.forEach((e, idx) => {
     const la = e.a, lb = e.b || null;
@@ -1889,8 +1937,7 @@ function moniTopologiaHTML() {
     const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
     // Un enlace caido no transporta trafico aunque el lado encendido siga
     // contando algun paquete de broadcast: mostrar 0 y sin animacion de flujo.
-    const total = (st.cur.estado === "caido" || (la && la.mem) || (lb && lb.mem))
-      ? 0 : Math.max(Number(la && la["total-bps"]) || 0, Number(lb && lb["total-bps"]) || 0);
+    const total = linkBps(e, st);
     etiq += `<text class="enlace-etiqueta" x="${mx}" y="${my - 6}">${moniEsc(e.red)} · ${moniBps(total)}</text>`;
     let marca = "", marcaColor = st.color;
     if (st.cur.reenvio) marca = "ruta de reenvío";
@@ -1946,6 +1993,8 @@ function moniTopologiaHTML() {
   let detalle = "";
   if (MONI.selEnlace !== null && enlaces[MONI.selEnlace]) detalle = moniEnlaceDetalle(enlaces[MONI.selEnlace]);
 
+  const traficoCamino = moniTraficoCamino(idxPar, enlaces, est, linkBps, umbral);
+
   const leyenda = `<div class="moni-leyenda">
     <span><i class="sw" style="background:#10b981"></i>enlace normal</span>
     <span><i class="sw" style="background:${COL_SAT}"></i>enlace saturado (≥ ${umbral}%)</span>
@@ -1963,12 +2012,71 @@ function moniTopologiaHTML() {
     <span style="color:var(--text-muted);font-size:12px">${nodos.length} nodos · ${enlaces.length} enlaces · hacé clic en un enlace para ajustar el costo OSPF · los puntos muestran el flujo dominante</span>
     <button class="btn btn-dark" style="min-width:auto;padding:3px 8px;font-size:11px;vertical-align:middle;margin-left:6px" onclick="moniPosReset()" title="Vuelve a la posición automática">↺ Reacomodar</button>
   </div>
+  ${traficoCamino}
   ${leyenda}
   <svg class="grafo" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
     ${lin}${flujo}${etiq}${nod}
   </svg>
   ${detalle}
   ${moniReglasActivasHTML()}`;
+}
+
+/* Cuadro con el tráfico total que circula por el camino de la regla vigente.
+ * Suma una sola vez cada enlace del camino (usando el lado de mayor tráfico,
+ * como en las etiquetas del mapa); si no hay regla vigente suma toda la red. */
+function moniTraficoCamino(idxPar, enlaces, est, linkBps, umbral) {
+  const dir = MONI.dir || {};
+  const caminos = dir.caminos || [];
+  const usados = new Set();
+  let total = 0, maxPct = 0, caidos = 0, alcance = "";
+  for (const c of caminos) {
+    for (const ar of c.aristas || []) {
+      const idx = idxPar.get(ar.equipo + "|" + ar.interfaz);
+      if (idx == null || usados.has(idx)) continue;
+      usados.add(idx);
+      const e = enlaces[idx], st = est[idx];
+      total += linkBps(e, st);
+      const pct = Number(e.pct) || 0;
+      if (pct > maxPct) maxPct = pct;
+      if (st.cur.estado === "caido") caidos++;
+    }
+  }
+  if (usados.size) {
+    alcance = "camino de la regla";
+  } else {
+    // Sin regla vigente: total de la red, contando cada enlace una sola vez.
+    alcance = "red completa";
+    enlaces.forEach((e, idx) => {
+      const bps = linkBps(e, est[idx]);
+      total += bps;
+      const pct = Number(e.pct) || 0;
+      if (pct > maxPct) maxPct = pct;
+      if (est[idx].cur.estado === "caido") caidos++;
+    });
+  }
+  const colorTot = caidos ? "#f87171" : (maxPct >= umbral ? "#f59e0b" : "#34d399");
+  // Caídos de TODA la red (el mapa ya los pinta): el cuadro los refleja
+  // siempre, sin importar si el enlace está o no dentro del camino.
+  const caidosRed = enlaces.filter((e, idx) => est[idx] && est[idx].cur.estado === "caido").length;
+  const nodos = (MONI.topo && MONI.topo.nodos) || [];
+  const esCaido = n => !!n.mem && !n.externo;
+  const routersCaidos = nodos.filter(esCaido).length;
+  const activos = (MONI.alarmas || []).filter(a => a.estado === "activa").length;
+  let html = `<div class="moni-resumen" style="margin:6px 0">
+    <div class="tarjeta" title="Suma del tráfico (RX+TX) circulando por cada enlace ${usados.size ? "del camino de la regla vigente" : "de la red"}">
+      <div class="k">Tráfico total (${moniEsc(alcance)})</div>
+      <div class="v" style="color:${colorTot}">${moniBps(total)}</div>
+    </div>
+    <div class="tarjeta"><div class="k">Enlaces en ${usados.size ? "el camino" : "la red"}</div><div class="v">${usados.size || enlaces.length}</div></div>
+    <div class="tarjeta"><div class="k">Uso máximo</div><div class="v" style="color:${maxPct >= umbral ? "#f59e0b" : "#34d399"}">${maxPct.toFixed(0)}%</div></div>
+    <div class="tarjeta" title="Enlaces caídos en toda la red (no solo en el camino)"><div class="k">Enlaces caídos (red)</div><div class="v" style="color:${caidosRed ? "#f87171" : "#34d399"}">${caidosRed}</div></div>
+    <div class="tarjeta" title="Routers que no responden en toda la red"><div class="k">Routers caídos (red)</div><div class="v" style="color:${routersCaidos ? "#f87171" : "#34d399"}">${routersCaidos}</div></div>
+    <div class="tarjeta" title="Alarmas activas en este momento"><div class="k">Alarmas activas</div><div class="v" style="color:${activos ? "#f87171" : "#34d399"}">${activos}</div></div>
+  </div>`;
+  if (usados.size) {
+    html += `<div style="font-size:11px;color:var(--text-muted);margin:-2px 0 6px">Cada enlace del camino se cuenta una sola vez (máx. de sus dos extremos) · para alarmar este total usá la métrica <b>camino-bps</b> (o <b>red-bps</b> con tráfico real).</div>`;
+  }
+  return html;
 }
 
 function moniEnlaceDetalle(e) {
@@ -2093,7 +2201,7 @@ function moniFormAlarmaHTML() {
   const dflt = (k, d) => (al[k] === undefined || al[k] === null || al[k] === "" ? d : al[k]);
   const sevs = ["info", "alerta", "critico"];
   const accs = [["ninguna", "ninguna (solo avisa)"], ["manual", "manual (solo avisa)"], ["automatica", "automática (aplica costo)"]];
-  const metricas = [["total-bps", "Total (1 interfaz)"], ["red-bps", "Total de red (suma)"], ["rx-bps", "RX"], ["tx-bps", "TX"], ["pct", "% saturación"]];
+  const metricas = [["total-bps", "Total (1 interfaz)"], ["red-bps", "Total de red (suma)"], ["camino-bps", "Tráfico del camino (regla)"], ["rx-bps", "RX"], ["tx-bps", "TX"], ["pct", "% saturación"]];
   const ops = [">", ">=", "<", "<=", "==", "!="];
   const hostOpts = moniListaHosts().map(h => `<option value="${moniEsc(h)}"></option>`).join("");
   const pill = (v, txt, actual, primero) =>
@@ -2654,7 +2762,11 @@ function moniCaminoRefrescar() {
     const el = $(idr);
     if (el) el.textContent = txt;
   }
-  const ents = moniCaminoEntradas();
+  // Al rearmar el camino solo se regeneran las filas de la ruta elegida; las
+  // filas "evitar" (que agrega "Forzar este camino") se conservan, si no se
+  // perdía el forzado cada vez que se seguía tocando el mapa.
+  const conservar = $("dir-entradas") ? moniDirLeerEntradas().filter(x => x.rol === "evitar") : [];
+  const ents = moniCaminoEntradas().concat(conservar);
   const cont = $("dir-entradas");
   if (cont && ents.length) cont.innerHTML = ents.map(moniDirFilaHTML).join("");
   const org = $("dir-origen"), dst = $("dir-destino");

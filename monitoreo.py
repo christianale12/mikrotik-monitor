@@ -37,7 +37,7 @@ OLVIDO_TOPO = 120.0
 MUESTRA_VIEJA = 60.0
 TOPO_TTL = 4.0
 ANTICIPO_RECONVERGENCIA = 30.0  # seg. de adelanto con que se aplica una franja, para que OSPF ya haya convergido al comenzar
-METRICAS = ("rx-bps", "tx-bps", "total-bps", "red-bps", "pct")
+METRICAS = ("rx-bps", "tx-bps", "total-bps", "red-bps", "camino-bps", "pct")
 OPERADORES = (">", ">=", "<", "<=", "==", "!=")
 
 _lock = threading.RLock()
@@ -634,8 +634,58 @@ def _host_de_nodo(topo, ref):
     return ""
 
 
+def _camino_de_entradas(peer_itf, ho, hd, entradas):
+    """Camino armado a mano en la regla (entradas con rol distinto de 'evitar').
+
+    Encadena los enlaces elegidos por el usuario desde el origen para armar la
+    secuencia de nodos, respetando la selección manual. Devuelve None si no se
+    puede reconstruir un camino completo hasta el destino (así recién ahí se
+    traza por OSPF).
+    """
+    pend = []
+    for e in (entradas or []):
+        if str(e.get("rol") or "ruta") == "evitar":
+            continue
+        eq = str(e.get("equipo") or "")
+        itf = str(e.get("interfaz") or "")
+        if eq and itf:
+            pend.append((eq, itf))
+    if not pend:
+        return None
+    aristas = []
+    nodos = [ho]
+    actual = ho
+    while pend:
+        hallado = None
+        for i, (eq, itf) in enumerate(pend):
+            if eq == actual:
+                peer = peer_itf.get((eq, itf))
+                hallado = (i, (eq, itf), peer[0] if peer else hd)
+                break
+            peer = peer_itf.get((eq, itf))
+            if peer and peer[0] == actual:
+                hallado = (i, (eq, itf), eq)
+                break
+        if not hallado:
+            break
+        i, edge, siguiente = hallado
+        pend.pop(i)
+        aristas.append(edge)
+        actual = siguiente
+        nodos.append(actual)
+        if actual == hd:
+            break
+    if not aristas or nodos[-1] != hd:
+        return None
+    return {"aristas": [{"equipo": eq, "interfaz": itf} for eq, itf in aristas],
+            "nodos": nodos}
+
+
 def _caminos_regla(topo, sesiones, regla):
-    """Camino(s) OSPF entre el origen y el destino declarados en la regla.
+    """Camino(s) entre el origen y el destino declarados en la regla.
+
+    Si la regla declara el camino a mano (entradas con rol 'ruta'), se respeta
+    esa selección tal cual. Si no, se traza por las rutas OSPF activas.
 
     Devuelve una lista de caminos, cada uno con las aristas (equipo/interfaz)
     y la secuencia de nodos. Vacío si la regla no define origen y destino.
@@ -647,6 +697,11 @@ def _caminos_regla(topo, sesiones, regla):
     if not ho or not hd or ho == hd:
         return []
     peer_itf, _, host_a_rid = _mapas_traza(topo)
+
+    elegido = _camino_de_entradas(peer_itf, ho, hd, regla.get("entradas"))
+    if elegido is not None:
+        return [elegido]
+
     rid_dest = host_a_rid.get(hd, "")
     if not rid_dest:
         return []
@@ -687,6 +742,42 @@ def _caminos_regla(topo, sesiones, regla):
             "nodos": nodos,
         })
     return caminos
+
+
+def _costos_camino_forzado(topo, regla, costo_alto=65535):
+    """Costos para forzar el camino declarado en una regla de direccionamiento.
+
+    Devuelve {(equipo, interfaz): costo_alto} con los enlaces internos (router-
+    router) que NO forman parte del camino elegido, para que OSPF tenga que ir
+    sí o sí por el camino seleccionado.
+
+    Devuelve {} si la regla no declara origen y destino, si el camino no se
+    puede reconstruir, o si algún enlace del camino está caído (en ese caso se
+    deja que OSPF reconverja en vez de cortar la red).
+    """
+    ho = _host_de_nodo(topo, regla.get("origen"))
+    hd = _host_de_nodo(topo, regla.get("destino"))
+    if not ho or not hd or ho == hd:
+        return {}
+    peer_itf, _, _ = _mapas_traza(topo)
+    camino = _camino_de_entradas(peer_itf, ho, hd, regla.get("entradas"))
+    if camino is None:
+        return {}
+    claves = {(a["equipo"], a["interfaz"]) for a in camino["aristas"]}
+    forzado = {}
+    for e in topo.get("enlaces") or []:
+        a, b = e.get("a") or {}, e.get("b") or {}
+        if not (a.get("equipo") and a.get("interfaz") and b.get("equipo") and b.get("interfaz")):
+            continue
+        par_a = (a["equipo"], a["interfaz"])
+        par_b = (b["equipo"], b["interfaz"])
+        if par_a in claves or par_b in claves:
+            if e.get("estado") == "caido":
+                return {}          # camino cortado: no forzar, dejar reconverger
+            continue
+        forzado[par_a] = costo_alto
+        forzado[par_b] = costo_alto
+    return forzado
 
 
 def _armar_topologia(recogidos, sesiones=None):
@@ -1407,6 +1498,12 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
             for par in _pares_de_entrada(topo, equipos, ent):
                 deseado[par] = int(ent["costo"])
                 origen[par] = etq
+        # Forzar el camino declarado: encarecer los enlaces internos que no son
+        # parte de la ruta, salvo que una entrada de la regla ya fije ese costo.
+        for par, costo in _costos_camino_forzado(topo, regla).items():
+            if par not in deseado:
+                deseado[par] = costo
+                origen[par] = etq + " (forzado)"
     with _lock:
         fallback = dict(_fallback)
     for par, info in fallback.items():
@@ -1464,6 +1561,84 @@ def _reconciliar_costos(sesiones, topo, equipos, efectos_alarma):
     return cambios
 
 
+def _trafico_real_alcance(alcance, topo):
+    """Trafico real (RX+TX) de las interfaces del alcance, sin doble conteo.
+
+    Cada cable cuenta una sola vez: si las dos puntas estan en el alcance se
+    toma el MAXIMO (no la suma), igual que el mapa. Las interfaces que no son
+    parte de un cable conocido se cuentan por su propio valor.
+    """
+    peer = {}
+    caido = {}
+    for e in topo.get("enlaces") or []:
+        a, b = e.get("a"), e.get("b")
+        if a and b and a.get("equipo") and b.get("equipo"):
+            ka = (a["equipo"], a["interfaz"])
+            kb = (b["equipo"], b["interfaz"])
+            peer[ka] = kb
+            peer[kb] = ka
+            caido[ka] = e.get("estado")
+            caido[kb] = e.get("estado")
+    presentes = {(f[0], f[2]) for f in alcance}
+    por_cable = {}
+    for (host, _ident, iface, fila) in alcance:
+        clave = (host, iface)
+        par = peer.get(clave)
+        es_cable = bool(par and par in presentes)
+        grupo = tuple(sorted([clave, par])) if es_cable else clave
+        v = 0 if (es_cable and caido.get(clave) == "caido") else _entero(fila.get("total-bps"))
+        if grupo in por_cable:
+            por_cable[grupo] = max(por_cable[grupo], v)
+        else:
+            por_cable[grupo] = v
+    return sum(por_cable.values())
+
+
+def _trafico_camino_de_regla(topo, sesiones):
+    """Tráfico total (RX+TX) del camino de la regla vigente.
+
+    Cuenta cada cable una sola vez (el máximo de sus dos puntas, o 0 si el
+    enlace está caído), igual que la tarjeta "Tráfico total (camino de la
+    regla)" del mapa. Devuelve (total_bps, objetivos, orden): objetivos/orden
+    apuntan al enlace más cargado del camino, para que una acción automática
+    siga teniendo a quién aplicarle el costo.
+    """
+    regla, _modo = regla_vigente(anticipo=ANTICIPO_RECONVERGENCIA)
+    caminos = _caminos_regla(topo, sesiones, regla)
+    idx = {}
+    for e in topo.get("enlaces") or []:
+        for lado in (e.get("a"), e.get("b")):
+            if lado and lado.get("equipo") and lado.get("interfaz"):
+                idx[(lado["equipo"], lado["interfaz"])] = e
+    vistos = set()
+    total = 0
+    lados = []
+    for c in caminos:
+        for ar in c.get("aristas") or []:
+            e = idx.get((ar.get("equipo"), ar.get("interfaz")))
+            if e is None:
+                continue
+            clave = id(e)
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            a, b = e.get("a") or {}, e.get("b") or {}
+            ta = _entero(a.get("total-bps"))
+            tb = _entero(b.get("total-bps"))
+            v = 0 if e.get("estado") == "caido" else max(ta, tb)
+            total += v
+            lado = a if ta >= tb else b
+            if lado and lado.get("equipo") and lado.get("interfaz"):
+                lados.append((v, lado))
+    objetivos, orden = [], []
+    if lados:
+        lados.sort(key=lambda x: -x[0])
+        lado = lados[0][1]
+        objetivos = [(lado.get("equipo"), lado.get("nodo") or "",
+                      lado.get("interfaz"), lado)]
+    return total, objetivos, orden
+
+
 def _evaluar_alarmas(sesiones, topo, equipos, ahora):
     """Mantiene el estado de cada regla y lanza eventos.
 
@@ -1471,10 +1646,15 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
     (equipo/identidad y patron de interfaz), asi que una sola regla puede
     disparar varias instancias a la vez.
 
-    Con metrica "red-bps" la regla se evalua sobre la SUMA de rx+tx de
-    TODAS las interfaces que matchean el alcance; es el mismo numero que
-    muestra la tarjeta "Trafico total" del monitor, para que el umbral se
-    pueda leer directo de ahi.
+    Con metrica "red-bps" la regla se evalua sobre el trafico real de las
+    interfaces que matchean el alcance: cada CABLE cuenta una sola vez (se
+    toma el maximo de sus dos puntas, no la suma), igual que el mapa, para que
+    el umbral se pueda leer directo de la tarjeta de trafico.
+
+    Con metrica "camino-bps" la regla se evalua sobre el trafico total del
+    camino de la regla de direccionamiento vigente, contando cada cable una
+    sola vez: es el mismo numero que muestra la tarjeta "Trafico total (camino
+    de la regla)" del mapa.
 
     El cambio de costo no se aplica aca: se devuelve la lista de 'efectos'
     activos y el reconciliador (con prioridad sobre las reglas de
@@ -1523,9 +1703,15 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                 alcance.append((host, ident, iface, fila))
 
         # Instancias a evaluar: una por interfaz, o una sola con la suma.
-        if metrica == "red-bps":
+        if metrica == "camino-bps":
+            # Tráfico del camino de la regla vigente (cada cable una sola vez),
+            # el mismo número que muestra la tarjeta del mapa.
+            valor_c, objetivos_c, orden_c = _trafico_camino_de_regla(topo, sesiones)
+            instancias = [(f"camino|{patron}", valor_c, "", "",
+                           "camino de la regla", objetivos_c, orden_c)]
+        elif metrica == "red-bps":
             if alcance:
-                suma = sum(_entero(f[3].get("total-bps")) for f in alcance)
+                suma = _trafico_real_alcance(alcance, topo)
                 orden = sorted(alcance,
                                key=lambda f: -_entero(f[3].get("total-bps")))
                 instancias = [(f"red|{patron}", suma, "", "", patron, orden[:1], orden)]
@@ -1572,7 +1758,12 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                 est["cond"] = cumple
                 est["t"] = ahora
             est["valor"] = valor
-            etiqueta = iface if metrica != "red-bps" else f"total de red ({patron})"
+            if metrica == "red-bps":
+                etiqueta = f"total de red ({patron})"
+            elif metrica == "camino-bps":
+                etiqueta = "tráfico del camino de la regla"
+            else:
+                etiqueta = iface
             quien = ident or host or "red"
             if cumple and not est["activa"] and ahora - est["t"] >= dur:
                 est["activa"] = True
