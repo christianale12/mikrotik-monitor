@@ -1290,7 +1290,7 @@ def recoger(sesiones, hosts=None):
                                   "err": str(e), "nombre": None, "rid": None,
                                   "th": time.time(), "marcas": []}
         else:
-            with ThreadPoolExecutor(max_workers=min(len(elegidos), 8)) as ex:
+            with ThreadPoolExecutor(max_workers=min(len(elegidos), 32)) as ex:
                 futuros = {ex.submit(_recoger_host, sesiones, h): h for h in elegidos}
                 for fut in as_completed(futuros):
                     host = futuros[fut]

@@ -1864,7 +1864,7 @@ function moniTopologiaHTML() {
   if (!nodos.length) return `<div class="banner-info">Todavía no hay topología detectada (esperá la primera lectura de OSPF).</div>`;
   const { pos, W, H } = moniLayout();
   const colEstado = { full: "#10b981", degradado: "#f59e0b", "sin-ospf": "#64748b", caido: "#ef4444", "un-lado": "#64748b" };
-  const COL_SAT = "#f59e0b", COL_REENVIO = "#a855f7", COL_DIR = "#22d3ee", LINGER = 10000;
+  const COL_SAT = "#f59e0b", COL_REENVIO = "#a855f7", COL_DIR = "#22d3ee", LINGER = 3000;
   const umbral = Number(MONI.cfg["saturado-pct"]) || 80;
   const ahora = Date.now();
   const hist = MONI.hist || (MONI.hist = {});
@@ -1874,26 +1874,25 @@ function moniTopologiaHTML() {
   const dirCamino = new Set();
   for (const c of (MONI.dir && MONI.dir.caminos) || []) for (const ar of c.aristas || []) dirCamino.add(ar.equipo + "|" + ar.interfaz);
 
-  // Estado "efectivo" por enlace: mantiene el color del evento hasta 10 s
-  // después de normalizarse, para que se vea la vuelta a la normalidad.
+  // Estado REAL por enlace: el color del cable y el flujo animado reflejan
+  // SIEMPRE la lectura actual (nada de arrastrar el estado viejo). Si un enlace
+  // se acaba de normalizar, queda solo una nota "→ normal" unos segundos.
   const est = enlaces.map((e, idx) => {
     const id = e.id || (e.a ? e.a.equipo + ":" + e.a.interfaz : "e" + idx);
     const grave = e.estado !== "full" || e.saturado || e.reenvio;
-    let cur = { estado: e.estado, saturado: !!e.saturado, reenvio: !!e.reenvio };
-    let linger = false;
+    const cur = { estado: e.estado, saturado: !!e.saturado, reenvio: !!e.reenvio };
+    let nota = null;
     if (grave) {
       hist[id] = Object.assign({ ts: ahora }, cur);
     } else if (hist[id] && ahora - hist[id].ts < LINGER) {
-      cur = { estado: hist[id].estado, saturado: hist[id].saturado, reenvio: hist[id].reenvio };
-      linger = true;
+      nota = hist[id];
     } else if (hist[id]) {
       delete hist[id];
     }
     let color = colEstado[cur.estado] || "#64748b";
     if (cur.reenvio) color = COL_REENVIO;
     else if (cur.saturado) color = COL_SAT;
-    const op = linger ? (0.3 + 0.65 * (1 - (ahora - hist[id].ts) / LINGER)) : 0.95;
-    return { cur, linger, color, op, id };
+    return { cur, nota, color, op: 0.95, id };
   });
 
   // Índice de enlace por extremo (equipo|interfaz) para poder recorrer el
@@ -1945,7 +1944,13 @@ function moniTopologiaHTML() {
     else if (st.cur.estado !== "full") marca = st.cur.estado;
     else if (dlink) { marca = dlink.origen; marcaColor = COL_DIR; }
     else if (esCamino) { marca = "camino regla"; marcaColor = COL_DIR; }
-    if (marca) etiq += `<text x="${mx}" y="${my + 9}" text-anchor="middle" font-size="10" font-weight="700" fill="${marcaColor}">${moniEsc(marca)}${st.linger ? " → normal" : ""}</text>`;
+    if (st.nota && !marca) {
+      const prev = st.nota.estado !== "full" ? st.nota.estado
+        : (st.nota.saturado ? "saturado" : (st.nota.reenvio ? "ruta de reenvío" : "ok"));
+      marca = prev + " → normal";
+      marcaColor = "#10b981";
+    }
+    if (marca) etiq += `<text x="${mx}" y="${my + 9}" text-anchor="middle" font-size="10" font-weight="700" fill="${marcaColor}">${moniEsc(marca)}</text>`;
     if (total > 0) {
       const n = pct >= 40 ? 3 : (pct >= 10 ? 2 : 1);
       const dur = Math.max(0.8, 4 - 3 * pct / 100);
