@@ -1814,13 +1814,6 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                 accion_txt = ""
                 if accion == "automatica":
                     if costo is not None:
-                        for (ohost, _oident, oiface, _ofila) in objetivos:
-                            efectos.append({
-                                "equipo": ohost, "interfaz": oiface,
-                                "costo": max(1, min(65535, costo)),
-                                "alarma": al["id"],
-                                "nombre": al.get("nombre") or al["id"],
-                            })
                         accion_txt = f"costo {costo} al enlace (prioridad alarma)"
                         mensaje += f" -> {accion_txt}"
                     if cn is not None:
@@ -1850,6 +1843,18 @@ def _evaluar_alarmas(sesiones, topo, equipos, ahora):
                                interfaz=iface, valor=valor, umbral=umbral,
                                metrica=metrica, mensaje=mensaje, detalle="")
             if est["activa"]:
+                # El costo de la alarma se re-emite en CADA ciclo mientras
+                # siga activa: si solo se emitiera al activarse, el proximo
+                # ciclo el reconciliador volveria a imponer la regla del
+                # camino y el trafico no se desviaria.
+                if accion == "automatica" and costo is not None:
+                    for (ohost, _oident, oiface, _ofila) in objetivos:
+                        efectos.append({
+                            "equipo": ohost, "interfaz": oiface,
+                            "costo": max(1, min(65535, costo)),
+                            "alarma": al["id"],
+                            "nombre": al.get("nombre") or al["id"],
+                        })
                 for (_h, _i, _if, fila) in objetivos:
                     previa = fila.get("alarma")
                     if orden_sev.get(severidad, 0) >= orden_sev.get(previa or "", 0):

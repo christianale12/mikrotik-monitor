@@ -7,7 +7,7 @@ alarmas:
   costo-normal: null
   duracion-s: 1
   equipo: ''
-  habilitada: true
+  habilitada: false
   id: al-mv2yucno
   interfaz: ether[2-9]
   limpiar-s: 5
@@ -15,75 +15,79 @@ alarmas:
   nombre: correccion-critica
   operador: '>='
   severidad: critico
-  umbral: 8100000.0
-regla-activa: dir-mvbt3ot9
+  umbral: 4000000.0
+- id: al-mvcqokwd
+  nombre: tarde
+  equipo: ''
+  interfaz: '*[ether2-9]'
+  metrica: camino-bps
+  operador: '>='
+  umbral: 4300000.0
+  severidad: critico
+  duracion-s: 2
+  limpiar-s: 5
+  accion: automatica
+  costo: 100
+  costo-normal: null
+  habilitada: true
+regla-activa: dir-mvcqs72l
 direccionamiento:
-- destino: 192.168.122.177
+- destino: 192.168.122.89
   entradas:
-  - equipo: 192.168.122.227
-    interfaz: ether2
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.172
+  - equipo: 192.168.122.244
     interfaz: ether3
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.126
+  - equipo: 192.168.122.46
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.138
     interfaz: ether3
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.150
+  - equipo: 192.168.122.127
     interfaz: ether4
     costo: 1
     enlace: true
     rol: ruta
   habilitada: true
   horario: null
-  id: dir-mvbt2xrt
+  id: dir-mvcqrmhd
   modo: manual
   nombre: Regla
-  origen: 192.168.122.227
-- destino: 192.168.122.177
+  origen: 192.168.122.244
+- id: dir-mvcqs72l
+  nombre: Regla
+  origen: 192.168.122.244
+  destino: 192.168.122.89
+  habilitada: true
+  modo: manual
+  horario: null
   entradas:
-  - equipo: 192.168.122.227
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.50
-    interfaz: ether4
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.224
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.139
+  - equipo: 192.168.122.244
     interfaz: ether2
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.70
+  - equipo: 192.168.122.188
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.12
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.72
     interfaz: ether4
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.150
-    interfaz: ether4
-    costo: 1
-    enlace: true
-    rol: ruta
-  habilitada: true
-  horario: null
-  id: dir-mvbt3ot9
-  modo: manual
-  nombre: Regla
-  origen: 192.168.122.227
 aplicado:
 - equipo: 192.168.122.129
   interfaz: ether2
@@ -145,10 +149,6 @@ aplicado:
   interfaz: ether2
   costo: 1
   origen: regla Regla
-- equipo: 192.168.122.127
-  interfaz: ether3
-  costo: 1
-  origen: regla Regla
 - equipo: 192.168.122.94
   interfaz: ether3
   costo: 1
@@ -163,10 +163,6 @@ aplicado:
   origen: regla Regla
 - equipo: 192.168.122.111
   interfaz: ether5
-  costo: 1
-  origen: regla Regla
-- equipo: 192.168.122.127
-  interfaz: ether4
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.111
@@ -685,3 +681,39 @@ aplicado:
   interfaz: ether5
   costo: 65535
   origen: regla Regla (forzado)
+- equipo: 192.168.122.244
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.12
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.188
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.12
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.188
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.72
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.244
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.89
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.72
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
