@@ -16,84 +16,74 @@ alarmas:
   operador: '>='
   severidad: critico
   umbral: 8100000.0
-regla-activa: dir-mv8hcxx1
+regla-activa: dir-mvbt3ot9
 direccionamiento:
-- destino: 192.168.122.26
+- destino: 192.168.122.177
   entradas:
-  - equipo: 192.168.122.51
+  - equipo: 192.168.122.227
     interfaz: ether2
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.76
+  - equipo: 192.168.122.172
     interfaz: ether3
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.132
+  - equipo: 192.168.122.126
     interfaz: ether3
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.57
+  - equipo: 192.168.122.150
     interfaz: ether4
     costo: 1
     enlace: true
     rol: ruta
   habilitada: true
   horario: null
-  id: dir-mv8dtinw
+  id: dir-mvbt2xrt
   modo: manual
   nombre: Regla
-  origen: 192.168.122.51
-- id: dir-mv8hcxx1
-  nombre: Regla
-  origen: 192.168.122.51
-  destino: 192.168.122.26
-  habilitada: true
-  modo: manual
-  horario: null
+  origen: 192.168.122.227
+- destino: 192.168.122.177
   entradas:
-  - equipo: 192.168.122.51
+  - equipo: 192.168.122.227
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.50
+    interfaz: ether4
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.224
+    interfaz: ether3
+    costo: 1
+    enlace: true
+    rol: ruta
+  - equipo: 192.168.122.139
     interfaz: ether2
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.76
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.132
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.57
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.222
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.63
+  - equipo: 192.168.122.70
     interfaz: ether4
     costo: 1
     enlace: true
     rol: ruta
-  - equipo: 192.168.122.56
-    interfaz: ether3
-    costo: 1
-    enlace: true
-    rol: ruta
-  - equipo: 192.168.122.128
+  - equipo: 192.168.122.150
     interfaz: ether4
     costo: 1
     enlace: true
     rol: ruta
+  habilitada: true
+  horario: null
+  id: dir-mvbt3ot9
+  modo: manual
+  nombre: Regla
+  origen: 192.168.122.227
 aplicado:
 - equipo: 192.168.122.129
   interfaz: ether2
@@ -131,20 +121,12 @@ aplicado:
   interfaz: ether3
   costo: 1
   origen: regla Regla
-- equipo: 192.168.122.119
-  interfaz: ether2
-  costo: 1
-  origen: regla Regla
 - equipo: 192.168.122.33
   interfaz: ether2
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.169
   interfaz: ether4
-  costo: 1
-  origen: regla Regla
-- equipo: 192.168.122.119
-  interfaz: ether3
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.169
@@ -163,20 +145,12 @@ aplicado:
   interfaz: ether2
   costo: 1
   origen: regla Regla
-- equipo: 192.168.122.224
-  interfaz: ether2
-  costo: 1
-  origen: regla Regla
 - equipo: 192.168.122.127
   interfaz: ether3
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.94
   interfaz: ether3
-  costo: 1
-  origen: regla Regla
-- equipo: 192.168.122.224
-  interfaz: ether4
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.239
@@ -211,10 +185,6 @@ aplicado:
   interfaz: ether3
   costo: 1
   origen: regla Regla
-- equipo: 192.168.122.61
-  interfaz: ether5
-  costo: 1
-  origen: regla Regla
 - equipo: 192.168.122.5
   interfaz: ether2
   costo: 1
@@ -233,10 +203,6 @@ aplicado:
   origen: regla Regla
 - equipo: 192.168.122.74
   interfaz: ether4
-  costo: 1
-  origen: regla Regla
-- equipo: 192.168.122.61
-  interfaz: ether2
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.161
@@ -307,10 +273,6 @@ aplicado:
   interfaz: ether4
   costo: 1
   origen: regla Regla
-- equipo: 192.168.122.63
-  interfaz: ether4
-  costo: 1
-  origen: regla Regla
 - equipo: 192.168.122.26
   interfaz: ether2
   costo: 1
@@ -331,10 +293,6 @@ aplicado:
   interfaz: ether2
   costo: 65535
   origen: regla Regla (forzado)
-- equipo: 192.168.122.63
-  interfaz: ether2
-  costo: 65535
-  origen: regla Regla (forzado)
 - equipo: 192.168.122.51
   interfaz: ether3
   costo: 65535
@@ -344,10 +302,6 @@ aplicado:
   costo: 1
   origen: regla Regla
 - equipo: 192.168.122.222
-  interfaz: ether3
-  costo: 1
-  origen: regla Regla
-- equipo: 192.168.122.63
   interfaz: ether3
   costo: 1
   origen: regla Regla
@@ -364,6 +318,370 @@ aplicado:
   costo: 65535
   origen: regla Regla (forzado)
 - equipo: 192.168.122.222
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.141
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.110
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.149
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.117
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.117
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.141
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.110
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.223
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.149
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.73
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.6
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.110
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.228
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.223
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.117
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.117
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.73
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.6
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.73
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.61
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.228
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.228
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.141
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.61
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.206
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.119
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.218
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.35
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.131
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.119
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.63
+  interfaz: ether5
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.63
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.131
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.113
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.113
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.206
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.206
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.63
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.162
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.162
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.113
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.35
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.218
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.119
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.35
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.218
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.63
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.206
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.98
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.113
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.162
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.150
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.70
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.139
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.79
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.227
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.50
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.50
+  interfaz: ether4
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.177
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.224
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.139
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.150
+  interfaz: ether3
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.150
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.172
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.172
+  interfaz: ether6
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.126
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.172
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.126
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.126
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.224
+  interfaz: ether2
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.172
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.79
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.70
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.185
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.70
+  interfaz: ether5
+  costo: 1
+  origen: regla Regla
+- equipo: 192.168.122.151
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.172
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.151
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.50
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.227
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.177
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.185
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.150
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.151
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.185
+  interfaz: ether3
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.185
+  interfaz: ether5
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.126
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.139
+  interfaz: ether4
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.70
+  interfaz: ether2
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.150
+  interfaz: ether6
+  costo: 65535
+  origen: regla Regla (forzado)
+- equipo: 192.168.122.151
   interfaz: ether5
   costo: 65535
   origen: regla Regla (forzado)

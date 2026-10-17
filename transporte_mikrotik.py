@@ -28,6 +28,9 @@ class ErrorMikroTik(Exception):
     """Error de la app con mensaje para mostrar al usuario."""
 
 
+# -------------------------------------------------------------------------
+# Escaneo de la red local: detectar MikroTiks con la API (8728) abierta
+# -------------------------------------------------------------------------
 def _local_red():
     """Devuelve la subred local y la IP local de esta PC.
 
@@ -185,6 +188,9 @@ def detectar_mikrotiks(puerto=8728, timeout=0.4, max_hilos=100):
     return encontrados, redes, ip_local
 
 
+# -------------------------------------------------------------------------
+# Conexion a la API de RouterOS: sesion serializada con candado (un cable)
+# -------------------------------------------------------------------------
 class _ApiSerial:
     """Envuelve una conexion librouteros serializando cada uso del socket.
 
@@ -332,6 +338,9 @@ def identificar_host(host, puerto=8728, timeout=4, usuario="admin", password="")
     }
 
 
+# -------------------------------------------------------------------------
+# Lecturas de resumen: lo que muestra el panel principal (una foto rapida)
+# -------------------------------------------------------------------------
 def estado_general(api):
     """Version, uptime, recursos (CPU/RAM/disco), reloj y serie."""
     ident = _primero(api, "/system/identity/print")
@@ -407,6 +416,9 @@ def nat(api):
     return filas
 
 
+# -------------------------------------------------------------------------
+# Export de la configuracion completa del equipo a YAML
+# -------------------------------------------------------------------------
 def configuracion_completa(api, secciones=None):
     """Reune la configuracion del equipo para exportar a YAML.
 
@@ -481,6 +493,9 @@ def configuracion_completa(api, secciones=None):
     return datos
 
 
+# -------------------------------------------------------------------------
+# Lecturas detalladas de tablas (para la UI y el export)
+# -------------------------------------------------------------------------
 def interfaces_lista(api):
     """Interfaces con campos relevantes (nombre, descripcion, speed, poe...)."""
     filas = []
@@ -824,6 +839,9 @@ def ospf_rutas(api):
     return filas
 
 
+# -------------------------------------------------------------------------
+# OSPF: configuracion en el equipo (loopback, IP de interfaz, instancia)
+# -------------------------------------------------------------------------
 def _crear_loopback(api):
     """Crea una interfaz virtual 'loopback-ospf' para el router-id.
 
@@ -906,6 +924,9 @@ def _set_instancia_ospf(api, router_id, redistribute=True, area="0.0.0.0"):
     return None
 
 
+# -------------------------------------------------------------------------
+# Topologia por MNDP/LLDP y utilidades de direccionamiento (redes, /30)
+# -------------------------------------------------------------------------
 def vecinos_interfaz(api):
     """Vecinos RouterOS por interfaz local (discovery MNDP/LLDP).
 
@@ -1155,6 +1176,9 @@ def _regenerar_redes_ospf(api, redes, bases, dir_loopback, itf_gestion,
     return msgs
 
 
+# -------------------------------------------------------------------------
+# Pasos 1 y 2: levantar OSPF e interfaces desde el YAML
+# -------------------------------------------------------------------------
 def configurar_p2p(api, router_id, networks, peerdatos, host=None,
                    area="0.0.0.0"):
     """Paso 2: interfaces de TODAS las placas según cómo estén cableadas.
@@ -1338,6 +1362,9 @@ def configurar_ospf(api, router_id, networks, area="0.0.0.0", redistribute=True,
     return msgs
 
 
+# -------------------------------------------------------------------------
+# Generacion del inventario ospf.yml (MNDP -> numerar R1..Rn -> YAML)
+# -------------------------------------------------------------------------
 def _fijar_clave(api, usuario, clave):
     """Cambia la clave del usuario indicado (por API). True si lo encontró."""
     if clave is None:
@@ -1496,6 +1523,17 @@ def generar_inventario_ospf(hosts, usuario="admin", password="123",
             and all(n >= 1 for n in numero.values())):
         orden = sorted(routers, key=lambda h: numero[h])
         mensajes.append("numeración por nodo GNS3 (R<n> = MikroTikCHR...-n)")
+    elif numero and len(set(numero.values())) == len(numero):
+        # mixto: los nodos que están en GNS3 conservan su número y el resto
+        # (routers reales, fuera de GNS3) se numeran a continuación del máximo,
+        # sin correr los números de los CHR.
+        siguiente = max(numero.values())
+        for host in sorted((h for h in routers if h not in numero),
+                           key=lambda h: _ip_a_int(h) or 0):
+            siguiente += 1
+            numero[host] = siguiente
+        orden = sorted(routers, key=lambda h: numero[h])
+        mensajes.append("numeración GNS3 + reales a continuación (R<n>)")
     else:
         orden = sorted(routers, key=lambda h: _ip_a_int(h) or 0)
         numero = {h: i + 1 for i, h in enumerate(orden)}
@@ -1511,15 +1549,23 @@ def generar_inventario_ospf(hosts, usuario="admin", password="123",
                 continue
             enlaces.setdefault(frozenset({host, peer}), {"a": host, "b": peer})
 
-    # una red /24 por enlace: base.<n_a><n_b>.0/24 (como el ejemplo)
+    # una red /24 por enlace: si ambos números son <=9 se mantiene el esquema
+    # clásico base.<na><nb>.0/24 (R1-R2 -> 10.0.12.0/24); si alguno es >=10 se
+    # usa 10.<na>.<nb>.0/24 (R1-R10 -> 10.1.10.0/24) para no desbordar el
+    # octeto, que con la concatenación superaría 255 (R9-R10 -> 10.0.910.0/24).
     usados = set()
     for en in enlaces.values():
         na, nb = sorted((numero[en["a"]], numero[en["b"]]))
-        octeto = f"{na}{nb}"
-        while octeto in usados:
-            octeto = str(int(octeto) + 1)
-        usados.add(octeto)
-        en["red"] = f"{base}.{octeto}.0/24"
+        if na <= 9 and nb <= 9:
+            red = f"{base}.{na}{nb}.0/24"
+        else:
+            red = f"10.{na}.{nb}.0/24"
+        while red in usados:
+            # desambigua (no debería ocurrir: cada par de números es único)
+            nb += 1
+            red = f"10.{na}.{nb}.0/24"
+        usados.add(red)
+        en["red"] = red
 
     # identidad y clave (opcional) antes de emitir el YAML
     if fijar_clave is not None:
@@ -1598,6 +1644,9 @@ def generar_inventario_ospf(hosts, usuario="admin", password="123",
             "equipos": equipos, "enlaces": lista_enlaces, "mensajes": mensajes}
 
 
+# -------------------------------------------------------------------------
+# Monitoreo de trafico y utilidades varias (identidad, costo OSPF)
+# -------------------------------------------------------------------------
 def interfaces_con_trafico(api):
     """Interfaces ethernet con bytes y paquetes rx/tx (para monitoreo).
 

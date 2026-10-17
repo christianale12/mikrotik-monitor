@@ -64,6 +64,9 @@ _ultimo = {}           # último resultado completo de poll(), para servirlo sin
 DIAS = ("lun", "mar", "mie", "jue", "vie", "sab", "dom")
 
 
+# -------------------------------------------------------------------------
+# Configuracion persistente (monitoreo.yml): carga, guardado y capacidades
+# -------------------------------------------------------------------------
 def set_reconectar(fn):
     """Registra la funcion (host) -> api|None con la que reintentar sesiones
     caidas. La usa 'recoger' cuando la API de un equipo dejo de responder
@@ -186,6 +189,9 @@ def guardar_saturado(pct):
     return config()
 
 
+# -------------------------------------------------------------------------
+# Alarmas: alta, baja y normalizacion de las reglas
+# -------------------------------------------------------------------------
 def guardar_alarmas(lista):
     limpias = []
     ids = set()
@@ -271,6 +277,9 @@ def _normalizar_horario(h):
     return {"desde": desde, "hasta": hasta, "dias": dias}
 
 
+# -------------------------------------------------------------------------
+# Direccionamiento: reglas por horario (alta, baja, activar/desactivar)
+# -------------------------------------------------------------------------
 def guardar_direccionamiento(lista):
     """Guarda las reglas de direccionamiento (con nombre) aplicando validación."""
     limpias = []
@@ -331,6 +340,9 @@ def desactivar_regla():
     return config()
 
 
+# -------------------------------------------------------------------------
+# Horarios: evaluacion de franjas y regla vigente
+# -------------------------------------------------------------------------
 def _minutos(hhmm):
     try:
         partes = str(hhmm).split(":")
@@ -449,6 +461,9 @@ def _entero(v):
         return 0
 
 
+# -------------------------------------------------------------------------
+# Muestreo: tasa real en bps por diferencia de contadores entre muestras
+# -------------------------------------------------------------------------
 def muestrear(host, filas, ahora=None):
     """Devuelve las interfaces con rx/tx y las tasas en bps.
 
@@ -488,6 +503,9 @@ def _utilizacion(fila, cap):
     return round(min(999.0, peor * 100.0 / cap), 1)
 
 
+# -------------------------------------------------------------------------
+# Topologia: identidad, gestion, lados y caminos por equipo
+# -------------------------------------------------------------------------
 def _identidad(api, host):
     with _lock:
         v = _cache_id.get(host)
@@ -634,13 +652,18 @@ def _host_de_nodo(topo, ref):
     return ""
 
 
-def _camino_de_entradas(peer_itf, ho, hd, entradas):
+def _camino_de_entradas(peer_itf, ho, hd, entradas, topo=None):
     """Camino armado a mano en la regla (entradas con rol distinto de 'evitar').
 
     Encadena los enlaces elegidos por el usuario desde el origen para armar la
     secuencia de nodos, respetando la selección manual. Devuelve None si no se
     puede reconstruir un camino completo hasta el destino (así recién ahí se
     traza por OSPF).
+
+    Las entradas pueden venir con el nombre visible del nodo (p.ej. 'R2') o con
+    el host real; se normalizan a host con la topología. Además se prueba el
+    enlace en ambos sentidos, así el encadenado no depende del orden en que el
+    usuario marcó los clicks.
     """
     pend = []
     for e in (entradas or []):
@@ -658,13 +681,16 @@ def _camino_de_entradas(peer_itf, ho, hd, entradas):
     while pend:
         hallado = None
         for i, (eq, itf) in enumerate(pend):
-            if eq == actual:
-                peer = peer_itf.get((eq, itf))
-                hallado = (i, (eq, itf), peer[0] if peer else hd)
+            eqh = _host_de_nodo(topo, eq) if topo else eq
+            peer = peer_itf.get((eqh, itf)) or peer_itf.get((eq, itf))
+            if not peer:
+                continue
+            ph, _pif = peer
+            if eqh == actual:
+                hallado = (i, (eqh, itf), ph)
                 break
-            peer = peer_itf.get((eq, itf))
-            if peer and peer[0] == actual:
-                hallado = (i, (eq, itf), eq)
+            if ph == actual:
+                hallado = (i, (ph, itf), eqh)
                 break
         if not hallado:
             break
@@ -698,7 +724,7 @@ def _caminos_regla(topo, sesiones, regla):
         return []
     peer_itf, _, host_a_rid = _mapas_traza(topo)
 
-    elegido = _camino_de_entradas(peer_itf, ho, hd, regla.get("entradas"))
+    elegido = _camino_de_entradas(peer_itf, ho, hd, regla.get("entradas"), topo)
     if elegido is not None:
         return [elegido]
 
@@ -760,7 +786,7 @@ def _costos_camino_forzado(topo, regla, costo_alto=65535):
     if not ho or not hd or ho == hd:
         return {}
     peer_itf, _, _ = _mapas_traza(topo)
-    camino = _camino_de_entradas(peer_itf, ho, hd, regla.get("entradas"))
+    camino = _camino_de_entradas(peer_itf, ho, hd, regla.get("entradas"), topo)
     if camino is None:
         return {}
     claves = {(a["equipo"], a["interfaz"]) for a in camino["aristas"]}
@@ -780,6 +806,9 @@ def _costos_camino_forzado(topo, regla, costo_alto=65535):
     return forzado
 
 
+# -------------------------------------------------------------------------
+# Armado de la topologia: nodos y enlaces detectados por los cables
+# -------------------------------------------------------------------------
 def _armar_topologia(recogidos, sesiones=None):
     ahora = time.time()
     nodos = []
@@ -1178,6 +1207,9 @@ def _armar_enlace(a, b):
     }
 
 
+# -------------------------------------------------------------------------
+# Recoleccion: leer cada equipo y reconectar si se cayo
+# -------------------------------------------------------------------------
 def _leer_equipo(api, host):
     """Una pasada de lecturas de las que depende el monitoreo y la topologia."""
     return {
@@ -1270,6 +1302,9 @@ def _recoger_host(sesiones, host):
             "nombre": nombre, "rid": rid, "th": th, "marcas": marcas}
 
 
+# -------------------------------------------------------------------------
+# Recoleccion periodica de la red (lee todos los equipos en paralelo)
+# -------------------------------------------------------------------------
 def recoger(sesiones, hosts=None):
     """Lee de cada equipo todo lo necesario para monitoreo y topologia.
 
@@ -1394,6 +1429,9 @@ def _extremos(topo, host, iface):
     return res
 
 
+# -------------------------------------------------------------------------
+# Costos OSPF: cambio manual de costo y reconciliacion de los aplicados
+# -------------------------------------------------------------------------
 def cambiar_costo(sesiones, host, interfaz, costo):
     """Cambia el costo OSPF de una interfaz (None = restaurar el dinámico)."""
     api = (sesiones.get(host) or {}).get("api")
@@ -1428,6 +1466,9 @@ def _valor_metrica(fila, metrica):
     return _entero(fila.get(metrica))
 
 
+# -------------------------------------------------------------------------
+# Motor de alarmas: condicion, eventos y efectos sobre costos OSPF
+# -------------------------------------------------------------------------
 def _cumple(valor, operador, umbral):
     if operador == ">":
         return valor > umbral
@@ -1880,6 +1921,9 @@ def _poll_bajo_lock(sesiones, hosts=None):
     return res
 
 
+# -------------------------------------------------------------------------
+# Ciclo de poll: muestrear, evaluar alarmas y publicar el resultado
+# -------------------------------------------------------------------------
 def poll(sesiones, hosts=None):
     """Ciclo completo de monitoreo: lee, calcula, evalúa alarmas, arma topología.
 
@@ -1991,6 +2035,9 @@ def aplicar_regla_ahora(sesiones):
         return _reconciliar_costos(sesiones, topo, equipos, efectos)
 
 
+# -------------------------------------------------------------------------
+# Metricas para la UI y reinicio de estados
+# -------------------------------------------------------------------------
 def metricas(sesiones, hosts=None):
     """Costos y estado OSPF por interfaz, para la pestaña de métricas."""
     elegidos = [h for h in (hosts or list(sesiones)) if h in sesiones]

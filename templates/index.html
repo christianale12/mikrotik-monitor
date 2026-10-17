@@ -980,6 +980,12 @@ function guardarYamlGenerado() {
   guardarArchivoYAML(window.__yamlGenerado, "ospf.yml");
 }
 
+function guardarYamlActual() {
+  const yaml = window.__yamlGenerado || "";
+  if (!yaml) { setError("No hay YAML para guardar. Generá el inventario con 🧩 primero."); return; }
+  guardarArchivoYAML(yaml, "ospf.yml");
+}
+
 async function levantarPaso(paso) {
   const r = $("resultado");
   let yaml = window.__yamlGenerado || "";
@@ -995,6 +1001,7 @@ async function levantarPaso(paso) {
     if (!res.yaml || !res.yaml.trim()) { setError("El archivo está vacío."); return; }
     yaml = res.yaml;
   }
+  window.__yamlGenerado = yaml;
 
   const paso1 = paso !== 2;
   const endpoint = paso1 ? "/api/ospf_levantar" : "/api/ospf_interfaces";
@@ -1020,6 +1027,9 @@ async function levantarPaso(paso) {
       html += `<div class="banner-error">${rs.host}: ${rs.error}</div>`;
     }
   });
+  html += `<div class="acciones-sesion" style="margin-top:8px;">
+      <button class="btn btn-green" onclick="guardarYamlActual()">💾 Guardar YAML de esta configuración</button>
+    </div>`;
   r.innerHTML = html;
   await cargarEquipos();
 }
@@ -2073,7 +2083,6 @@ function moniTraficoCamino(idxPar, enlaces, est, linkBps, umbral) {
       <div class="v" style="color:${colorTot}">${moniBps(total)}</div>
     </div>
     <div class="tarjeta"><div class="k">Enlaces en ${usados.size ? "el camino" : "la red"}</div><div class="v">${usados.size || enlaces.length}</div></div>
-    <div class="tarjeta"><div class="k">Uso máximo</div><div class="v" style="color:${maxPct >= umbral ? "#f59e0b" : "#34d399"}">${maxPct.toFixed(0)}%</div></div>
     <div class="tarjeta" title="Enlaces caídos en toda la red (no solo en el camino)"><div class="k">Enlaces caídos (red)</div><div class="v" style="color:${caidosRed ? "#f87171" : "#34d399"}">${caidosRed}</div></div>
     <div class="tarjeta" title="Routers que no responden en toda la red"><div class="k">Routers caídos (red)</div><div class="v" style="color:${routersCaidos ? "#f87171" : "#34d399"}">${routersCaidos}</div></div>
     <div class="tarjeta" title="Alarmas activas en este momento"><div class="k">Alarmas activas</div><div class="v" style="color:${activos ? "#f87171" : "#34d399"}">${activos}</div></div>

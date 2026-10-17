@@ -73,6 +73,9 @@ mono.iniciar(_dir_datos())
 _intento_reconexion = {}
 
 
+# -------------------------------------------------------------------------
+# Reconexion automatica de equipos caidos (equipos pendientes)
+# -------------------------------------------------------------------------
 def _reconectar_host(host):
     """Reintenta abrir la API de un equipo cuya sesion dejo de responder.
 
@@ -155,6 +158,9 @@ def _hilo_reconciliador():
 threading.Thread(target=_hilo_reconciliador, daemon=True).start()
 
 
+# -------------------------------------------------------------------------
+# Helpers de request y sesion (resolver host, abrir API)
+# -------------------------------------------------------------------------
 def _datos_request():
     """Devuelve el payload del request (JSON o formulario)."""
     return request.get_json(silent=True) or request.form
@@ -183,6 +189,9 @@ def _api_para(datos):
     return api, host, None
 
 
+# -------------------------------------------------------------------------
+# Rutas: pagina, escaneo, identificacion y conexion
+# -------------------------------------------------------------------------
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -325,6 +334,9 @@ def equipos():
     return jsonify({"ok": True, "equipos": lista, "activo": list(SESIONES)[0] if len(SESIONES) == 1 else ""})
 
 
+# -------------------------------------------------------------------------
+# OSPF: armado de topologia (peerdatos) y pasos 1 y 2 desde el YAML
+# -------------------------------------------------------------------------
 def _ctx_topo(datos):
     """(topo, equipos_list, error) desde el 'yaml' o 'config' recibido.
 
@@ -531,6 +543,9 @@ def ospf_generar():
     return jsonify({"ok": True, "escaneados": hosts, **res})
 
 
+# -------------------------------------------------------------------------
+# Rutas de consulta (datos, monitoreo, topologia, alarmas, metricas)
+# -------------------------------------------------------------------------
 @app.route("/api/datos", methods=["POST"])
 def datos():
     datos = _datos_request()
@@ -763,6 +778,9 @@ def api_metricas():
                     "topologia": mono.topologia(SESIONES)})
 
 
+# -------------------------------------------------------------------------
+# Export de la configuracion del equipo a YAML
+# -------------------------------------------------------------------------
 @app.route("/api/exportar", methods=["POST"])
 def exportar():
     """Genera la configuracion del equipo en YAML con las secciones elegidas.
@@ -816,6 +834,9 @@ def exportar():
     return jsonify({"ok": True, "yaml": buffer.getvalue(), "archivo": nombre_archivo})
 
 
+# -------------------------------------------------------------------------
+# Cierre de la sesion con un equipo
+# -------------------------------------------------------------------------
 @app.route("/api/desconectar", methods=["POST"])
 def desconectar():
     datos = _datos_request()
@@ -1428,6 +1449,9 @@ def restaurar_completa():
     })
 
 
+# -------------------------------------------------------------------------
+# Comparacion de dos YAML (diff plano) para /api/comparar
+# -------------------------------------------------------------------------
 def _flatten_diff(a, b, ruta=""):
     """Compara dos estructuras YAML y devuelve lista de diferencias.
 
